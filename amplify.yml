@@ -6,6 +6,8 @@ frontend:
         - npm ci
     build:
       commands:
+        # Amplify env vars reach the build only; the Next.js server reads them from .env.production
+        - env | grep -E '^(DATABASE_SECRET_ARN|SESSION_SECRET|ADMIN_PASSWORD)=' >> .env.production || true
         - npm run build
   artifacts:
     baseDirectory: .next

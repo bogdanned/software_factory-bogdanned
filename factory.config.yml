@@ -1,0 +1,34 @@
+# The factory's settings. Every workflow and script reads them from here.
+# Fill this in as you build the factory (tasks 3 to 10).
+
+tracker:
+  kind: linear
+  team: BBD
+
+labels:
+  new: factory:new
+  ready: factory:ready
+  in_progress: factory:in-progress
+  needs_human: factory:needs-human
+  blast_low: blast:low
+  blast_high: blast:high
+
+# Agents must never change these. Enforce it in code, not just in prompts.
+protected_paths:
+  - .github/
+  - factory/
+  - factory.config.yml
+  - .claude/
+
+# Commands every PR must pass.
+gates:
+  lint: npm run lint
+  typecheck: npm run typecheck
+  test: npm test
+  e2e: npm run e2e
+
+limits:
+  max_open_prs: 2
+  max_fix_rounds: 3
+  max_turns: 40
+  timeout_minutes: 20

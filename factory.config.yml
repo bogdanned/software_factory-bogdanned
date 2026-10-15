@@ -7,9 +7,11 @@ tracker:
 
 labels:
   new: factory:new
+  refined: factory:refined
   ready: factory:ready
   in_progress: factory:in-progress
-  needs_human: factory:needs-human
+  in_review: factory:in-review
+  escalated: factory:escalated
   blast_low: blast:low
   blast_high: blast:high
 

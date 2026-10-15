@@ -28,7 +28,7 @@ export default async function Board({ searchParams }: { searchParams: Promise<Re
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold">Feedback</h1>
+        <h1 className="text-2xl font-semibold">Feedback board</h1>
         {user && (
           <Button nativeButton={false} render={<Link href="/new" />}>
             New idea

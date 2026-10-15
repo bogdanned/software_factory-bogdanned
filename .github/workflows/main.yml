@@ -1,0 +1,71 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run lint
+
+  typecheck:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run typecheck
+
+  test:
+    needs: typecheck
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_USER: bugboard, POSTGRES_PASSWORD: bugboard, POSTGRES_DB: bugboard }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U bugboard" --health-interval 2s --health-retries 20
+    env:
+      DATABASE_URL: postgres://bugboard:bugboard@localhost:5432/bugboard
+      SESSION_SECRET: ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run db:migrate
+      - run: npm run db:seed
+      - run: npm test
+
+  e2e:
+    needs: test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_USER: bugboard, POSTGRES_PASSWORD: bugboard, POSTGRES_DB: bugboard }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U bugboard" --health-interval 2s --health-retries 20
+    env:
+      DATABASE_URL: postgres://bugboard:bugboard@localhost:5432/bugboard
+      SESSION_SECRET: ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run db:migrate
+      - run: npm run db:seed
+      - run: npm run build
+      - run: npm run e2e

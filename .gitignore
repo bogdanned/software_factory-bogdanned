@@ -45,3 +45,7 @@ next-env.d.ts
 # tests
 /test-results/
 /playwright-report/
+
+# factory run files, never committed
+factory-in/
+factory-out/

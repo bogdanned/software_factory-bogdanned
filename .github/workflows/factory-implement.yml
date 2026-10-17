@@ -1,0 +1,109 @@
+name: factory-implement
+# Every 30 minutes on weekdays: take the oldest factory:ready ticket, let the
+# implementor work on a fresh branch, open a draft PR. Or one ticket by hand.
+on:
+  schedule:
+    - cron: "*/30 * * * 1-5"
+  workflow_dispatch:
+    inputs:
+      ticket:
+        description: "One factory:ready ticket id, e.g. BBD-12. Empty: the oldest one."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-implement
+  cancel-in-progress: false
+
+jobs:
+  pick:
+    if: vars.FACTORY_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ticket: ${{ steps.pick.outputs.ticket }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - id: pick
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          TICKET: ${{ inputs.ticket }}
+        run: |
+          if [ -n "$TICKET" ]; then
+            [[ "$TICKET" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]] || { echo "::error::not a ticket id: $TICKET"; exit 1; }
+          fi
+          ticket=$(node factory/scripts/implement.mjs pick ${TICKET:+"$TICKET"})
+          echo "picked: $ticket"
+          echo "ticket=$ticket" >> "$GITHUB_OUTPUT"
+
+  implement:
+    needs: pick
+    if: needs.pick.outputs.ticket != 'null'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_USER: bugboard, POSTGRES_PASSWORD: bugboard, POSTGRES_DB: bugboard }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U bugboard" --health-interval 2s --health-retries 20
+    env:
+      TICKET: ${{ fromJSON(needs.pick.outputs.ticket).identifier }}
+      BRANCH: ${{ fromJSON(needs.pick.outputs.ticket).branch }}
+      DATABASE_URL: postgres://bugboard:bugboard@localhost:5432/bugboard
+      SESSION_SECRET: ci
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run db:migrate && npm run db:seed
+
+      - name: Branch and load the ticket
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          git config user.name "factory[bot]"
+          git config user.email "factory@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          mkdir -p factory-out
+          { echo "<<<TICKET"; node factory/scripts/linear.mjs spec "$TICKET"; echo "TICKET>>>"; } > "$RUNNER_TEMP/spec.md"
+
+      - name: Prepare the implementor
+        id: agent
+        run: node factory/scripts/agent.mjs implementor --spec "$RUNNER_TEMP/spec.md" --question factory-out/question.md
+
+      # The agent sees the repo, the spec and a database. Its only secret is the OAuth token.
+      - name: Run the implementor
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        timeout-minutes: ${{ fromJSON(steps.agent.outputs.timeout_minutes) }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: ${{ steps.agent.outputs.prompt }}
+          claude_args: ${{ steps.agent.outputs.claude_args }}
+
+      # Plain code pushes and opens the draft PR. Only this step holds the push token.
+      - name: Push and open the draft PR
+        if: ${{ !cancelled() && steps.agent.outcome == 'success' }}
+        env:
+          FACTORY_GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          BASE_SHA: ${{ github.sha }}
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: node factory/scripts/implement.mjs finish "$TICKET" "$BRANCH" --spec "$RUNNER_TEMP/spec.md" --question factory-out/question.md --execution "$EXECUTION_FILE"
+
+      - name: Hand the ticket back if the run failed
+        if: ${{ failure() && env.TICKET != '' }}
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: node factory/scripts/implement.mjs escalate "$TICKET" "The implement run failed."

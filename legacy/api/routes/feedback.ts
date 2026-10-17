@@ -86,7 +86,15 @@ async function voteCount(id: number): Promise<number> {
 
 feedbackRoutes.post("/feedback/:id/vote", requireUser, async (req, res) => {
   const id = Number(req.params.id) || 0;
-  await sql("INSERT INTO votes (feedback_id, user_id) VALUES ($1, $2)", [id, req.user!.id]);
+  // The unique constraint on (feedback_id, user_id) makes this safe under concurrent requests.
+  const inserted = await sql(
+    "INSERT INTO votes (feedback_id, user_id) VALUES ($1, $2) ON CONFLICT (feedback_id, user_id) DO NOTHING RETURNING id",
+    [id, req.user!.id],
+  );
+  if (inserted.length === 0) {
+    res.status(409).json({ error: "Already voted" });
+    return;
+  }
   res.status(201).json({ votes: await voteCount(id) });
 });
 

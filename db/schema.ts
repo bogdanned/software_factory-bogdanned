@@ -1,4 +1,4 @@
-import { integer, pgTable, serial, text, timestamp, varchar } from "drizzle-orm/pg-core";
+import { integer, pgTable, serial, text, timestamp, unique, varchar } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -20,12 +20,17 @@ export const feedback = pgTable("feedback", {
   shippedAt: timestamp("shipped_at", { withTimezone: true }),
 });
 
-export const votes = pgTable("votes", {
-  id: serial("id").primaryKey(),
-  feedbackId: integer("feedback_id").notNull().references(() => feedback.id, { onDelete: "cascade" }),
-  userId: integer("user_id").notNull().references(() => users.id),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const votes = pgTable(
+  "votes",
+  {
+    id: serial("id").primaryKey(),
+    feedbackId: integer("feedback_id").notNull().references(() => feedback.id, { onDelete: "cascade" }),
+    userId: integer("user_id").notNull().references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  // One vote per user per idea.
+  (t) => [unique("votes_feedback_id_user_id_unique").on(t.feedbackId, t.userId)],
+);
 
 export const comments = pgTable("comments", {
   id: serial("id").primaryKey(),

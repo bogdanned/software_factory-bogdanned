@@ -1,0 +1,91 @@
+name: factory-refine
+# Every 30 minutes on weekdays: refine every factory:new ticket, oldest first,
+# and every factory:needs-info ticket a human has answered. Or one ticket by hand.
+on:
+  schedule:
+    - cron: "*/30 * * * 1-5"
+  workflow_dispatch:
+    inputs:
+      ticket:
+        description: "One ticket id, e.g. BBD-12. Empty: every ticket the sweep finds."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-refine
+  cancel-in-progress: false
+
+jobs:
+  tickets:
+    if: vars.FACTORY_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ids: ${{ steps.list.outputs.ids }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - id: list
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          TICKET: ${{ inputs.ticket }}
+        run: |
+          if [ -n "$TICKET" ]; then
+            [[ "$TICKET" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]] || { echo "::error::not a ticket id: $TICKET"; exit 1; }
+            ids="[\"$TICKET\"]"
+          else
+            ids=$(node factory/scripts/refine.mjs sweep)
+          fi
+          echo "tickets to refine: $ids"
+          echo "ids=$ids" >> "$GITHUB_OUTPUT"
+
+  refine:
+    needs: tickets
+    if: needs.tickets.outputs.ids != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        ticket: ${{ fromJSON(needs.tickets.outputs.ids) }}
+    env:
+      TICKET: ${{ matrix.ticket }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+
+      - name: Load the ticket
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          mkdir -p factory-in factory-out
+          { echo "<<<TICKET"; node factory/scripts/linear.mjs spec "$TICKET"; echo "TICKET>>>"; } > factory-in/ticket.md
+
+      - name: Prepare the refiner
+        id: agent
+        run: node factory/scripts/agent.mjs refiner --spec factory-in/ticket.md
+
+      # The agent sees the repo and the ticket file. Its only secret is the OAuth token.
+      - name: Run the refiner
+        uses: anthropics/claude-code-action@v1
+        timeout-minutes: ${{ fromJSON(steps.agent.outputs.timeout_minutes) }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: ${{ steps.agent.outputs.prompt }}
+          claude_args: ${{ steps.agent.outputs.claude_args }}
+
+      # Plain code writes the result. No file, or a bad one: the ticket is escalated.
+      - name: Write the result to Linear
+        if: ${{ !cancelled() && steps.agent.outcome == 'success' }}
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: node factory/scripts/refine.mjs apply "$TICKET" factory-out/refinement.json

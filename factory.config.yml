@@ -20,6 +20,12 @@ protected_paths:
   - factory.config.yml
   - .claude/
 
+# Any change here is high blast, whatever the refiner thinks.
+high_blast_paths:
+  - legacy/api/routes/admin.ts
+  - legacy/api/routes/auth.ts
+  - db/
+  
 # Commands every PR must pass.
 gates:
   lint: npm run lint

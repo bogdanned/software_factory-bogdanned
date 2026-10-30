@@ -24,6 +24,7 @@ feedbackRoutes.get("/feedback", async (req, res) => {
   const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
   const status = STATUSES.includes(String(req.query.status)) ? String(req.query.status) : null;
   const q = String(req.query.q ?? "").trim();
+  const order = req.query.sort === "newest" ? "f.created_at DESC, f.id DESC" : "votes DESC, f.created_at DESC, f.id DESC";
   const where = `($1::text IS NULL OR f.status = $1) AND ($2 = '' OR f.title ILIKE '%' || $2 || '%' OR f.body ILIKE '%' || $2 || '%')`;
 
   const items = await sql<Row>(
@@ -32,7 +33,7 @@ feedbackRoutes.get("/feedback", async (req, res) => {
             EXISTS (SELECT 1 FROM votes v WHERE v.feedback_id = f.id AND v.user_id = $3) AS voted
        FROM feedback f JOIN users u ON u.id = f.author_id
       WHERE ${where}
-      ORDER BY votes DESC
+      ORDER BY ${order}
       LIMIT $4 OFFSET $5`,
     [status, q, req.user?.id ?? 0, limit, (page - 1) * limit],
   );

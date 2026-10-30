@@ -40,4 +40,40 @@ describe("feedback API", () => {
     const res = await client()("GET", "/api/changelog");
     expect(res.json.items.length).toBeGreaterThan(0);
   });
+
+  describe("sorting", () => {
+    type Item = { id: number; votes: number; created_at: string };
+    const list = async (qs: string) => (await client()("GET", `/api/feedback?limit=100${qs}`)).json.items as Item[];
+    const newestFirst = (a: Item, b: Item) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime() || b.id - a.id;
+    const ids = (items: Item[]) => items.map((i) => i.id);
+
+    it("sorts by votes, then newest, by default and for top", async () => {
+      for (const qs of ["", "&sort=top"]) {
+        const items = await list(qs);
+        expect(ids(items)).toEqual(ids([...items].sort((a, b) => b.votes - a.votes || newestFirst(a, b))));
+      }
+    });
+
+    it("sorts newest first regardless of votes", async () => {
+      const items = await list("&sort=newest");
+      expect(ids(items)).toEqual(ids([...items].sort(newestFirst)));
+    });
+
+    it("treats an unknown sort like top", async () => {
+      expect(ids(await list("&sort=bogus"))).toEqual(ids(await list("&sort=top")));
+    });
+
+    it("pages without repeats or gaps", async () => {
+      for (const sort of ["top", "newest"]) {
+        const all = ids(await list(`&sort=${sort}`));
+        const seen: number[] = [];
+        for (let page = 1; page <= all.length; page++) {
+          const res = await client()("GET", `/api/feedback?sort=${sort}&limit=7&page=${page}`);
+          if (res.json.items.length === 0) break;
+          seen.push(...res.json.items.map((i: Item) => i.id));
+        }
+        expect(seen).toEqual(all);
+      }
+    });
+  });
 });

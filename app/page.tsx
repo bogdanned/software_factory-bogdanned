@@ -13,17 +13,26 @@ const FILTERS = [
   ["in_progress", "In progress"],
   ["shipped", "Shipped"],
 ] as const;
+const SORTS = [
+  ["top", "Top"],
+  ["newest", "Newest"],
+] as const;
 const LIMIT = 20;
 
 export default async function Board({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
-  const { status = "", q = "", page = "1" } = await searchParams;
-  const params = new URLSearchParams({ status, q, page, limit: String(LIMIT) });
+  const { status = "", q = "", page = "1", sort: sortParam } = await searchParams;
+  const sort = sortParam === "newest" ? "newest" : "top";
+  const params = new URLSearchParams({ status, q, page, sort, limit: String(LIMIT) });
   const [{ data }, user] = await Promise.all([
     api<{ items: FeedbackItem[]; total: number; page: number }>(`/api/feedback?${params}`),
     currentUser(),
   ]);
   const pages = Math.max(1, Math.ceil(data.total / LIMIT));
-  const href = (p: Record<string, string>) => `/?${new URLSearchParams({ status, q, ...p })}`;
+  const href = (p: Record<string, string>) => {
+    const query = new URLSearchParams({ status, q, sort, ...p });
+    if (query.get("sort") === "top") query.delete("sort");
+    return `/?${query}`;
+  };
 
   return (
     <div className="space-y-6">
@@ -38,6 +47,7 @@ export default async function Board({ searchParams }: { searchParams: Promise<Re
 
       <form className="flex gap-2">
         <input type="hidden" name="status" value={status} />
+        {sort === "newest" && <input type="hidden" name="sort" value={sort} />}
         <Input name="q" defaultValue={q} placeholder="Search" aria-label="Search" />
         <Button type="submit" variant="outline">
           Search
@@ -50,6 +60,20 @@ export default async function Board({ searchParams }: { searchParams: Promise<Re
             {label}
           </Button>
         ))}
+        <div className="ml-auto flex gap-1" role="group" aria-label="Sort">
+          {SORTS.map(([value, label]) => (
+            <Button
+              key={value}
+              size="sm"
+              variant={sort === value ? "secondary" : "ghost"}
+              aria-pressed={sort === value}
+              nativeButton={false}
+              render={<Link href={href({ sort: value, page: "1" })} />}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
       </div>
 
       <ul className="divide-y rounded-lg border">

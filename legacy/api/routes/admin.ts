@@ -23,3 +23,8 @@ admin.get("/admin/outbox", requireAdmin, async (req, res) => {
   );
   res.json({ emails });
 });
+
+admin.get("/admin/users", async (_req, res) => {
+  const users = await sql("SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC LIMIT 50");
+  res.json({ users });
+});

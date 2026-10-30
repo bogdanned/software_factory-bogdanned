@@ -124,6 +124,7 @@ jobs:
     if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'factory/')
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # GITHUB_TOKEN can't undraft with pull-requests: write alone, it needs contents: write too.
     permissions:
       contents: write
       pull-requests: write

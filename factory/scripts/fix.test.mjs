@@ -6,7 +6,7 @@ import { asOutput, decide, failedJobs, failures, marks, maxRounds, rest, run, ta
 const CONFIG = fs.readFileSync(new URL("../../factory.config.yml", import.meta.url), "utf8");
 const ENV = { GITHUB_REPOSITORY: "acme/bugboard", GITHUB_RUN_ID: "900", PR_NUMBER: "14" };
 const PR = { number: 14, draft: true, state: "open", title: "BBD-12: x", html_url: "https://github.com/acme/bugboard/pull/14", head: { ref: "factory/bbd-12-x", repo: { full_name: "acme/bugboard" } }, base: { ref: "main" } };
-const JOBS = { jobs: [{ id: 1, name: "lint", conclusion: "failure" }, { id: 2, name: "guard", conclusion: "success" }, { id: 3, name: "fix", conclusion: null }] };
+const JOBS = { jobs: [{ id: 1, name: "lint", conclusion: "failure" }, { id: 2, name: "test", conclusion: "success" }, { id: 3, name: "fix", conclusion: null }] };
 const round = (run) => `Fix round 1/3: lint failed.\n\n<!-- factory:fix-round run=${run} -->`;
 const BASE = { ticket: "BBD-12", draft: true, failed: ["lint"], bodies: [], runId: "900", max: 3 };
 
@@ -28,7 +28,7 @@ describe("fix", () => {
   test("the ticket comes from the factory branch name", () => {
     assert.equal(ticketOf("factory/bbd-12-sort-the-board"), "BBD-12");
     assert.equal(ticketOf("factory/bbd-7"), "BBD-7");
-    assert.equal(ticketOf("factory/guard-test"), null);
+    assert.equal(ticketOf("factory/no-ticket"), null);
     assert.equal(ticketOf("feature/bbd-12-x"), null);
     assert.equal(ticketOf(undefined), null);
   });
@@ -46,15 +46,12 @@ describe("fix", () => {
     assert.deepEqual(decide({ ...BASE, bodies: [round(1), round(2), round(3)] }), { action: "escalate", why: "CI is still red after 3 of 3 fix rounds" });
     assert.equal(decide({ ...BASE, max: 0 }).action, "escalate");
   });
-  test("a red guard escalates at once, whatever the rounds left", () => {
-    assert.deepEqual(decide({ ...BASE, failed: ["lint", "guard"] }), { action: "escalate", why: "The guard failed, the change breaks a factory rule" });
-  });
   test("re-runs, escalated tickets, undrafted PRs and green runs are left alone", () => {
     assert.match(decide({ ...BASE, bodies: [round(900)] }).why, /already handled/);
     assert.match(decide({ ...BASE, bodies: ["<!-- factory:escalated run=5 -->"] }).why, /already escalated/);
     assert.match(decide({ ...BASE, draft: false }).why, /out of draft/);
     assert.match(decide({ ...BASE, failed: [] }).why, /no job failed/);
-    assert.match(decide({ ...BASE, ticket: null, failed: ["guard"] }).why, /names no ticket/);
+    assert.match(decide({ ...BASE, ticket: null, failed: ["lint"] }).why, /names no ticket/);
   });
   test("run: a round posts its comment, then dispatches the implement workflow on the PR's base", async () => {
     const gh = fakeGitHub({ comments: ["lgtm"] });

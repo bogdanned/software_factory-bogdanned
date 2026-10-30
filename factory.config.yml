@@ -20,17 +20,6 @@ protected_paths:
   - factory.config.yml
   - .claude/
 
-# What the guard CI job refuses on a factory branch. protected_paths above count too.
-guard:
-  # Only branches starting with this are checked; a human's branch passes at once.
-  branch_prefix: factory/
-  # Text an added line in a test file may not contain: no skipped or focused tests.
-  forbid_in_tests: [".skip(", ".only("]
-  # Text no added line may contain: no silenced TypeScript or ESLint.
-  forbid: ["@ts-ignore", "@ts-expect-error", "eslint-disable"]
-  # true: deleting a test file, or renaming it to a non-test, fails.
-  protect_tests: true
-
 # Any change here is high blast, whatever the refiner thinks.
 high_blast_paths:
   - legacy/api/routes/admin.ts

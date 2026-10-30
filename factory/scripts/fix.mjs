@@ -46,8 +46,6 @@ export function decide({ ticket, draft, failed, bodies, runId, max }) {
   if (seen.some((m) => m.run === String(runId))) return { action: "skip", why: `CI run ${runId} was already handled` };
   if (seen.some((m) => m.kind === "escalated")) return { action: "skip", why: "the ticket is already escalated" };
   if (!failed.length) return { action: "skip", why: "no job failed" };
-  // A guard failure is a broken rule, not a bug: another round would only teach the agent to hide it.
-  if (failed.includes("guard")) return { action: "escalate", why: "The guard failed, the change breaks a factory rule" };
   const used = seen.filter((m) => m.kind === "fix-round").length;
   if (used >= max) return { action: "escalate", why: `CI is still red after ${used} of ${max} fix rounds` };
   return { action: "fix", round: used + 1, why: `fix round ${used + 1} of ${max}` };

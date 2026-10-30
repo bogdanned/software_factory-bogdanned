@@ -48,6 +48,7 @@ gates:
 auto_ready: true
 
 limits:
+  # [test] guard proof: a factory branch editing the config
   max_open_prs: 2
   max_fix_rounds: 3
   max_turns: 60

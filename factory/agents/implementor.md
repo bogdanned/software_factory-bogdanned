@@ -2,7 +2,7 @@
 name: implementor
 model: claude-sonnet-5-5
 allowed_tools: [Read, Write, Edit, Glob, Grep, Skill, Bash(npm run lint*), Bash(npm run typecheck*), Bash(npm test*), Bash(npm run build*), Bash(npm run e2e*), Bash(npx playwright test*), Bash(git add*), Bash(git commit*), Bash(git status*), Bash(git diff*), Bash(git log*)]
-max_turns: 40
+max_turns: 60
 timeout_minutes: 20
 skills: [vercel-react-best-practices]
 ---

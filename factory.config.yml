@@ -33,7 +33,7 @@ gates:
   test: npm test
   e2e: npm run e2e
 
-# Once every check is green, plain code takes a factory PR out of draft.
+# Once every check is green, a CI step (no AI) takes the factory PR out of draft.
 auto_ready: true
 
 limits:

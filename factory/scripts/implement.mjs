@@ -77,27 +77,23 @@ const git = (args, env = process.env) => {
 export async function escalate(id, team, message, env = process.env) {
   const issue = await getIssue(id, team);
   await comment(id, team, `${message}\n\nRun: ${runUrl(env)}`);
-  await label(id, team, [LABELS.escalated], [LABELS.inProgress, LABELS.ready, LABELS.inReview]);
+  await label(id, team, [LABELS.escalated], [LABELS.inProgress, LABELS.ready]);
   return `${issue.identifier}: escalated\n`;
-}
-
-// Why the agent's commits since `base` can't be pushed, or null: none made, or a protected file touched.
-export function refusal(base, question, env = process.env, run = git) {
-  if (run(["rev-list", "--count", `${base}..HEAD`], env) === "0") {
-    const q = question && fs.existsSync(question) ? fs.readFileSync(question, "utf8").trim() : "";
-    return q ? `The implementor has a question:\n\n${q}` : "The implementor made no commits and left no question.";
-  }
-  const changed = run(["diff", "--name-only", base, "HEAD"], env).split("\n").filter(Boolean);
-  const bad = touchesProtected(changed, fs.readFileSync("factory.config.yml", "utf8"));
-  return bad.length ? `The implementor changed protected files, nothing was pushed: ${bad.join(", ")}` : null;
 }
 
 // After the agent ran on the current branch: no commits or a protected file → escalate;
 // otherwise push with FACTORY_GH_TOKEN, open a draft PR, move the ticket to in-review.
 export async function finish(id, branch, { spec, question, execution } = {}, env = process.env, deps = { git, fetchFn: fetch }) {
   const issue = await getIssue(id, teamKey());
-  const stop = refusal(env.BASE_SHA || "origin/main", question, env, deps.git);
-  if (stop) return escalate(id, issue.team.key, stop, env);
+  const base = env.BASE_SHA || "origin/main";
+  const commits = deps.git(["rev-list", "--count", `${base}..HEAD`], env);
+  if (commits === "0") {
+    const q = question && fs.existsSync(question) ? fs.readFileSync(question, "utf8").trim() : "";
+    return escalate(id, issue.team.key, q ? `The implementor has a question:\n\n${q}` : "The implementor made no commits and left no question.", env);
+  }
+  const changed = deps.git(["diff", "--name-only", base, "HEAD"], env).split("\n").filter(Boolean);
+  const bad = touchesProtected(changed, fs.readFileSync("factory.config.yml", "utf8"));
+  if (bad.length) return escalate(id, issue.team.key, `The implementor changed protected files, nothing was pushed: ${bad.join(", ")}`, env);
 
   const token = env.FACTORY_GH_TOKEN;
   if (!token) throw new Error("FACTORY_GH_TOKEN is not set");
@@ -115,25 +111,11 @@ export async function finish(id, branch, { spec, question, execution } = {}, env
   return `${issue.identifier}: ${pr.html_url}\n`;
 }
 
-// A fix round: the new commits go on top of the PR's branch. No force, no new PR;
-// the push re-runs CI on the PR.
-export async function finishFix(id, branch, pr, { question } = {}, env = process.env, deps = { git }) {
-  const issue = await getIssue(id, teamKey());
-  const stop = refusal(env.BASE_SHA || `origin/${branch}`, question, env, deps.git);
-  if (stop) return escalate(id, issue.team.key, `Fix round on PR #${pr}: ${stop}`, env);
-  const token = env.FACTORY_GH_TOKEN;
-  if (!token) throw new Error("FACTORY_GH_TOKEN is not set");
-  const remote = `https://x-access-token:${token}@github.com/${env.GITHUB_REPOSITORY}.git`;
-  deps.git(["push", remote, `HEAD:refs/heads/${branch}`], env);
-  return `${issue.identifier}: fix pushed to PR #${pr}\n`;
-}
-
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [cmd, id, ...rest] = process.argv.slice(2);
   const opts = {};
-  for (let i = 1; i < rest.length; i += 2) if (["--spec", "--question", "--execution", "--pr"].includes(rest[i]) && rest[i + 1]) opts[rest[i].slice(2)] = rest[i + 1];
+  for (let i = 1; i < rest.length; i += 2) if (["--spec", "--question", "--execution"].includes(rest[i]) && rest[i + 1]) opts[rest[i].slice(2)] = rest[i + 1];
   const run = cmd === "pick" && (!id || ID.test(id)) ? () => pick(teamKey(), id)
-    : cmd === "finish" && ID.test(id ?? "") && rest[0] && opts.pr ? () => finishFix(id, rest[0], opts.pr, opts)
     : cmd === "finish" && ID.test(id ?? "") && rest[0] ? () => finish(id, rest[0], opts)
     : cmd === "escalate" && ID.test(id ?? "") && rest.join(" ").trim() ? () => escalate(id, teamKey(), rest.join(" ").trim())
     : null;

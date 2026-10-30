@@ -80,3 +80,43 @@ jobs:
       - run: npx --yes fallow@3.37.0 audit --base "origin/$BASE_REF"
         env:
           BASE_REF: ${{ github.base_ref }}
+
+  # Factory drafts only: when every job above is green, take the PR out of draft.
+  ready:
+    needs: [lint, typecheck, test, e2e, fallow]
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft && startsWith(github.head_ref, 'factory/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # GitHub won't undraft with pull-requests: write alone, it needs contents: write too.
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          grep -q '^auto_ready: true' factory.config.yml || { echo "auto_ready is off"; exit 0; }
+          gh pr ready "$PR_NUMBER"
+          gh pr comment "$PR_NUMBER" --body "All gates green: marked ready for review."
+
+  # Factory drafts only: a red check gives the implementor another round, up to
+  # limits.max_fix_rounds. The last round hands the ticket to a human.
+  fix:
+    needs: [lint, typecheck, test, e2e, fallow]
+    if: failure() && github.event_name == 'pull_request' && startsWith(github.head_ref, 'factory/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # actions: write starts the fix round.
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node factory/scripts/fix.mjs decide

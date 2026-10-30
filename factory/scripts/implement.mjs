@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // The implement workflow's plain code. `pick` takes the next ticket, `finish`
-// turns the agent's commits into a draft PR, `escalate` hands a ticket back.
+// turns the agent's commits into a draft PR (or, with --pr, pushes a fix round
+// onto that PR's branch), `escalate` hands a ticket back.
 // The agent itself never pushes and never sees the push token.
 //
 //   node factory/scripts/implement.mjs pick [BBD-12]                      # {identifier,title,branch} or null
 //   node factory/scripts/implement.mjs finish BBD-12 factory/bbd-12-slug --spec spec.md --question factory-out/question.md --execution out.json
+//   node factory/scripts/implement.mjs finish BBD-12 factory/bbd-12-slug --question factory-out/question.md --pr 14
 //   node factory/scripts/implement.mjs escalate BBD-12 "the run failed"
 
 import fs from "node:fs";
@@ -15,7 +17,7 @@ import { configList } from "./refine.mjs";
 
 export const LABELS = { ready: "factory:ready", inProgress: "factory:in-progress", inReview: "factory:in-review", escalated: "factory:escalated" };
 const ID = /^[A-Z][A-Z0-9]*-\d+$/;
-const USAGE = "usage: implement.mjs pick [id] | finish <id> <branch> [--spec f] [--question f] [--execution f] | escalate <id> <message>";
+const USAGE = "usage: implement.mjs pick [id] | finish <id> <branch> [--spec f] [--question f] [--execution f] [--pr n] | escalate <id> <message>";
 const runUrl = (env) => (env.GITHUB_RUN_ID ? `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}` : "a local run");
 
 // factory/<id lowercase>-<slug of the title>, at most 60 characters.
@@ -77,27 +79,36 @@ const git = (args, env = process.env) => {
 export async function escalate(id, team, message, env = process.env) {
   const issue = await getIssue(id, team);
   await comment(id, team, `${message}\n\nRun: ${runUrl(env)}`);
-  await label(id, team, [LABELS.escalated], [LABELS.inProgress, LABELS.ready]);
+  await label(id, team, [LABELS.escalated], [LABELS.inProgress, LABELS.ready, LABELS.inReview]);
   return `${issue.identifier}: escalated\n`;
 }
+
+// Why the agent's commits since `base` can't be pushed, or null: none made, or a protected file touched.
+export function refusal(base, question, env = process.env, run = git) {
+  if (run(["rev-list", "--count", `${base}..HEAD`], env) === "0") {
+    const q = question && fs.existsSync(question) ? fs.readFileSync(question, "utf8").trim() : "";
+    return q ? `The implementor has a question:\n\n${q}` : "The implementor made no commits and left no question.";
+  }
+  const changed = run(["diff", "--name-only", base, "HEAD"], env).split("\n").filter(Boolean);
+  const bad = touchesProtected(changed, fs.readFileSync("factory.config.yml", "utf8"));
+  return bad.length ? `The implementor changed protected files, nothing was pushed: ${bad.join(", ")}` : null;
+}
+
+const pushToken = (env) => {
+  if (!env.FACTORY_GH_TOKEN) throw new Error("FACTORY_GH_TOKEN is not set");
+  return env.FACTORY_GH_TOKEN;
+};
+const remote = (env) => `https://x-access-token:${pushToken(env)}@github.com/${env.GITHUB_REPOSITORY}.git`;
 
 // After the agent ran on the current branch: no commits or a protected file → escalate;
 // otherwise push with FACTORY_GH_TOKEN, open a draft PR, move the ticket to in-review.
 export async function finish(id, branch, { spec, question, execution } = {}, env = process.env, deps = { git, fetchFn: fetch }) {
   const issue = await getIssue(id, teamKey());
-  const base = env.BASE_SHA || "origin/main";
-  const commits = deps.git(["rev-list", "--count", `${base}..HEAD`], env);
-  if (commits === "0") {
-    const q = question && fs.existsSync(question) ? fs.readFileSync(question, "utf8").trim() : "";
-    return escalate(id, issue.team.key, q ? `The implementor has a question:\n\n${q}` : "The implementor made no commits and left no question.", env);
-  }
-  const changed = deps.git(["diff", "--name-only", base, "HEAD"], env).split("\n").filter(Boolean);
-  const bad = touchesProtected(changed, fs.readFileSync("factory.config.yml", "utf8"));
-  if (bad.length) return escalate(id, issue.team.key, `The implementor changed protected files, nothing was pushed: ${bad.join(", ")}`, env);
+  const stop = refusal(env.BASE_SHA || "origin/main", question, env, deps.git);
+  if (stop) return escalate(id, issue.team.key, stop, env);
 
-  const token = env.FACTORY_GH_TOKEN;
-  if (!token) throw new Error("FACTORY_GH_TOKEN is not set");
-  deps.git(["push", "--force-with-lease", `https://x-access-token:${token}@github.com/${env.GITHUB_REPOSITORY}.git`, `HEAD:refs/heads/${branch}`], env);
+  const token = pushToken(env);
+  deps.git(["push", "--force-with-lease", remote(env), `HEAD:refs/heads/${branch}`], env);
   const body = prBody({ identifier: issue.identifier, spec: spec && fs.existsSync(spec) ? fs.readFileSync(spec, "utf8") : "", cost: execution && fs.existsSync(execution) ? costOf(fs.readFileSync(execution, "utf8")) : "unknown", run: runUrl(env) });
   const res = await deps.fetchFn(`https://api.github.com/repos/${env.GITHUB_REPOSITORY}/pulls`, {
     method: "POST",
@@ -111,11 +122,22 @@ export async function finish(id, branch, { spec, question, execution } = {}, env
   return `${issue.identifier}: ${pr.html_url}\n`;
 }
 
+// A fix round: the new commits go on top of the PR's branch. No force, no new PR;
+// the push re-runs CI on the PR.
+export async function finishFix(id, branch, pr, { question } = {}, env = process.env, deps = { git }) {
+  const issue = await getIssue(id, teamKey());
+  const stop = refusal(env.BASE_SHA || `origin/${branch}`, question, env, deps.git);
+  if (stop) return escalate(id, issue.team.key, `Fix round on PR #${pr}: ${stop}`, env);
+  deps.git(["push", remote(env), `HEAD:refs/heads/${branch}`], env);
+  return `${issue.identifier}: fix pushed to PR #${pr}\n`;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [cmd, id, ...rest] = process.argv.slice(2);
   const opts = {};
-  for (let i = 1; i < rest.length; i += 2) if (["--spec", "--question", "--execution"].includes(rest[i]) && rest[i + 1]) opts[rest[i].slice(2)] = rest[i + 1];
+  for (let i = 1; i < rest.length; i += 2) if (["--spec", "--question", "--execution", "--pr"].includes(rest[i]) && rest[i + 1]) opts[rest[i].slice(2)] = rest[i + 1];
   const run = cmd === "pick" && (!id || ID.test(id)) ? () => pick(teamKey(), id)
+    : cmd === "finish" && ID.test(id ?? "") && rest[0] && opts.pr ? () => finishFix(id, rest[0], opts.pr, opts)
     : cmd === "finish" && ID.test(id ?? "") && rest[0] ? () => finish(id, rest[0], opts)
     : cmd === "escalate" && ID.test(id ?? "") && rest.join(" ").trim() ? () => escalate(id, teamKey(), rest.join(" ").trim())
     : null;

@@ -33,6 +33,9 @@ gates:
   test: npm test
   e2e: npm run e2e
 
+# Once every check is green, plain code takes a factory PR out of draft.
+auto_ready: true
+
 limits:
   max_open_prs: 2
   max_fix_rounds: 3

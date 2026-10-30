@@ -1,6 +1,7 @@
 name: factory-implement
 # Every 30 minutes on weekdays: take the oldest factory:ready ticket, let the
 # implementor work on a fresh branch, open a draft PR. Or one ticket by hand.
+# With pr and ci_run (the CI fix job sends them): a fix round on that PR's branch.
 on:
   schedule:
     - cron: "*/30 * * * 1-5"
@@ -10,12 +11,21 @@ on:
         description: "One factory:ready ticket id, e.g. BBD-12. Empty: the oldest one."
         required: false
         default: ""
+      pr:
+        description: "Fix round: the factory PR whose CI went red. Empty: a normal run."
+        required: false
+        default: ""
+      ci_run:
+        description: "Fix round: the id of the red CI run."
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
+# One normal run at a time; a fix round only waits for another round on the same PR.
 concurrency:
-  group: factory-implement
+  group: factory-implement-${{ inputs.pr || 'pick' }}
   cancel-in-progress: false
 
 jobs:
@@ -23,8 +33,14 @@ jobs:
     if: vars.FACTORY_PAUSED != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Reads the PR and the red run's logs in a fix round. The agent's job gets neither permission.
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     outputs:
       ticket: ${{ steps.pick.outputs.ticket }}
+      failures: ${{ steps.pick.outputs.failures }}
     steps:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
@@ -33,8 +49,19 @@ jobs:
       - id: pick
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TICKET: ${{ inputs.ticket }}
+          PR: ${{ inputs.pr }}
+          CI_RUN: ${{ inputs.ci_run }}
         run: |
+          if [ -n "$PR" ]; then
+            [[ "$PR" =~ ^[0-9]+$ && "$CI_RUN" =~ ^[0-9]+$ ]] || { echo "::error::a fix round needs a PR number and a CI run id"; exit 1; }
+            ticket=$(node factory/scripts/fix.mjs target "$PR")
+            node factory/scripts/fix.mjs failures "$CI_RUN"
+            echo "fix round on PR #$PR: $ticket"
+            echo "ticket=$ticket" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ -n "$TICKET" ]; then
             [[ "$TICKET" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]] || { echo "::error::not a ticket id: $TICKET"; exit 1; }
           fi
@@ -57,6 +84,7 @@ jobs:
     env:
       TICKET: ${{ fromJSON(needs.pick.outputs.ticket).identifier }}
       BRANCH: ${{ fromJSON(needs.pick.outputs.ticket).branch }}
+      PR: ${{ inputs.pr }}
       DATABASE_URL: postgres://bugboard:bugboard@localhost:5432/bugboard
       SESSION_SECRET: ci
     steps:
@@ -64,24 +92,31 @@ jobs:
         with: { fetch-depth: 0, persist-credentials: false }
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
+
+      # A fix round continues the PR's branch, with the red jobs' logs next to the ticket.
+      - name: Branch and load the ticket
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          FAILURES: ${{ needs.pick.outputs.failures }}
+        run: |
+          git config user.name "factory[bot]"
+          git config user.email "factory@users.noreply.github.com"
+          if [ -n "$PR" ]; then git switch "$BRANCH"; else git switch -c "$BRANCH"; fi
+          echo "BASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          mkdir -p factory-out
+          { echo "<<<TICKET"; node factory/scripts/linear.mjs spec "$TICKET"; echo "TICKET>>>"; } > "$RUNNER_TEMP/spec.md"
+          if [ -n "$PR" ]; then
+            { echo "<<<CI"; printf '%s\n' "$FAILURES"; echo "CI>>>"; } > "$RUNNER_TEMP/failures.md"
+          fi
+
       - run: npm ci
       - run: npm run db:migrate && npm run db:seed
       # Chromium for the e2e suite the implementor may run (npm run e2e).
       - run: npx playwright install --with-deps chromium
 
-      - name: Branch and load the ticket
-        env:
-          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-        run: |
-          git config user.name "factory[bot]"
-          git config user.email "factory@users.noreply.github.com"
-          git switch -c "$BRANCH"
-          mkdir -p factory-out
-          { echo "<<<TICKET"; node factory/scripts/linear.mjs spec "$TICKET"; echo "TICKET>>>"; } > "$RUNNER_TEMP/spec.md"
-
       - name: Prepare the implementor
         id: agent
-        run: node factory/scripts/agent.mjs implementor --spec "$RUNNER_TEMP/spec.md" --question factory-out/question.md
+        run: node factory/scripts/agent.mjs implementor --spec "$RUNNER_TEMP/spec.md" --question factory-out/question.md ${PR:+--failures "$RUNNER_TEMP/failures.md"}
 
       # The agent sees the repo, the spec and a database. Its only secret is the OAuth token.
       - name: Run the implementor
@@ -93,16 +128,18 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: ${{ steps.agent.outputs.prompt }}
           claude_args: ${{ steps.agent.outputs.claude_args }}
+          # The CI fix job starts fix rounds as github-actions[bot]; the action refuses bots unless listed.
+          allowed_bots: github-actions[bot]
 
-      # Plain code pushes and opens the draft PR. Only this step holds the push token.
+      # Plain code pushes and opens the draft PR (a fix round: pushes onto the PR).
+      # Only this step holds the push token.
       - name: Push and open the draft PR
         if: ${{ !cancelled() && steps.agent.outcome == 'success' }}
         env:
           FACTORY_GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-          BASE_SHA: ${{ github.sha }}
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
-        run: node factory/scripts/implement.mjs finish "$TICKET" "$BRANCH" --spec "$RUNNER_TEMP/spec.md" --question factory-out/question.md --execution "$EXECUTION_FILE"
+        run: node factory/scripts/implement.mjs finish "$TICKET" "$BRANCH" --spec "$RUNNER_TEMP/spec.md" --question factory-out/question.md --execution "$EXECUTION_FILE" ${PR:+--pr "$PR"}
 
       # The agent's transcript, so an escalation can be traced (denied tools, last turn).
       - name: Keep the implementor transcript

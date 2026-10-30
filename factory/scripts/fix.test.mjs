@@ -8,7 +8,7 @@ const ENV = { GITHUB_REPOSITORY: "acme/bugboard", GITHUB_RUN_ID: "900", PR_NUMBE
 const PR = { number: 14, draft: true, state: "open", title: "BBD-12: x", html_url: "https://github.com/acme/bugboard/pull/14", head: { ref: "factory/bbd-12-x", repo: { full_name: "acme/bugboard" } }, base: { ref: "main" } };
 const JOBS = { jobs: [{ id: 1, name: "lint", conclusion: "failure" }, { id: 2, name: "guard", conclusion: "success" }, { id: 3, name: "fix", conclusion: null }] };
 const round = (run) => `Fix round 1/3: lint failed.\n\n<!-- factory:fix-round run=${run} -->`;
-const BASE = { draft: true, failed: ["lint"], bodies: [], runId: "900", max: 3 };
+const BASE = { ticket: "BBD-12", draft: true, failed: ["lint"], bodies: [], runId: "900", max: 3 };
 
 // A fake GitHub: answers GETs by path, records every call.
 const fakeGitHub = ({ pr = PR, jobs = JOBS, comments = [] } = {}) => {
@@ -28,8 +28,9 @@ describe("fix", () => {
   test("the ticket comes from the factory branch name", () => {
     assert.equal(ticketOf("factory/bbd-12-sort-the-board"), "BBD-12");
     assert.equal(ticketOf("factory/bbd-7"), "BBD-7");
-    assert.throws(() => ticketOf("feature/bbd-12-x"), /not a factory branch/);
-    assert.throws(() => ticketOf(undefined), /not a factory branch/);
+    assert.equal(ticketOf("factory/guard-test"), null);
+    assert.equal(ticketOf("feature/bbd-12-x"), null);
+    assert.equal(ticketOf(undefined), null);
   });
   test("max_fix_rounds comes from limits, missing means none", () => {
     assert.equal(maxRounds(CONFIG), 3);
@@ -53,6 +54,7 @@ describe("fix", () => {
     assert.match(decide({ ...BASE, bodies: ["<!-- factory:escalated run=5 -->"] }).why, /already escalated/);
     assert.match(decide({ ...BASE, draft: false }).why, /out of draft/);
     assert.match(decide({ ...BASE, failed: [] }).why, /no job failed/);
+    assert.match(decide({ ...BASE, ticket: null, failed: ["guard"] }).why, /names no ticket/);
   });
   test("run: a round posts its comment, then dispatches the implement workflow on the PR's base", async () => {
     const gh = fakeGitHub({ comments: ["lgtm"] });
@@ -83,7 +85,7 @@ describe("fix", () => {
     assert.deepEqual(JSON.parse(await target("14", ENV, gh.call)), { identifier: "BBD-12", title: "BBD-12: x", branch: "factory/bbd-12-x", pr: 14 });
     await assert.rejects(target("14", ENV, fakeGitHub({ pr: { ...PR, state: "closed" } }).call), /is closed/);
     await assert.rejects(target("14", ENV, fakeGitHub({ pr: { ...PR, head: { ...PR.head, repo: { full_name: "evil/fork" } } } }).call), /another repo/);
-    await assert.rejects(target("14", ENV, fakeGitHub({ pr: { ...PR, head: { ...PR.head, ref: "main" } } }).call), /not a factory branch/);
+    await assert.rejects(target("14", ENV, fakeGitHub({ pr: { ...PR, head: { ...PR.head, ref: "main" } } }).call), /names no ticket/);
   });
   test("failures: each red job with the end of its log, up to the last error", async () => {
     const out = await failures("900", ENV, fakeGitHub().call);

@@ -20,11 +20,10 @@ const MARK = /<!-- factory:(fix-round|escalated) run=(\d+) -->/;
 const RED = ["failure", "timed_out"];
 const runUrl = (env) => `${env.GITHUB_SERVER_URL || "https://github.com"}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
 
-// factory/bbd-12-some-title → BBD-12. Anything else is not a factory PR.
+// factory/bbd-12-some-title → BBD-12; null when the branch names no ticket.
 export function ticketOf(branch) {
   const m = (branch ?? "").match(/^factory\/([a-z][a-z0-9]*-\d+)(-|$)/);
-  if (!m) throw new Error(`${branch} is not a factory branch`);
-  return m[1].toUpperCase();
+  return m ? m[1].toUpperCase() : null;
 }
 
 // limits.max_fix_rounds in factory.config.yml. Missing: 0, every red PR goes to a human.
@@ -40,8 +39,9 @@ export const marks = (bodies) => bodies.map((b) => (b ?? "").match(MARK)).filter
 export const failedJobs = (jobs) => jobs.filter((j) => RED.includes(j.conclusion) && j.name !== "fix");
 
 // What a red CI run gets: { action: "skip" | "escalate" | "fix", why, round? }.
-export function decide({ draft, failed, bodies, runId, max }) {
+export function decide({ ticket, draft, failed, bodies, runId, max }) {
   const seen = marks(bodies);
+  if (!ticket) return { action: "skip", why: "the branch names no ticket, there is nobody to hand it to" };
   if (!draft) return { action: "skip", why: "the PR is out of draft, a human has it" };
   if (seen.some((m) => m.run === String(runId))) return { action: "skip", why: `CI run ${runId} was already handled` };
   if (seen.some((m) => m.kind === "escalated")) return { action: "skip", why: "the ticket is already escalated" };
@@ -73,10 +73,10 @@ export async function run(env, config, deps = { call: rest, escalate }) {
   const comments = await call(`/issues/${env.PR_NUMBER}/comments?per_page=100`);
   const failed = failedJobs(jobs).map((j) => j.name);
   const max = maxRounds(config);
-  const d = decide({ draft: pr.draft, failed, bodies: comments.map((c) => c.body), runId: env.GITHUB_RUN_ID, max });
+  const ticket = ticketOf(pr.head.ref);
+  const d = decide({ ticket, draft: pr.draft, failed, bodies: comments.map((c) => c.body), runId: env.GITHUB_RUN_ID, max });
   if (d.action === "skip") return `fix: nothing to do, ${d.why}.`;
 
-  const ticket = ticketOf(pr.head.ref);
   const say = (text, kind) => call(`/issues/${env.PR_NUMBER}/comments`, { method: "POST", body: { body: `${text} [CI run](${runUrl(env)})\n\n<!-- factory:${kind} run=${env.GITHUB_RUN_ID} -->` } });
   if (d.action === "escalate") {
     await deps.escalate(ticket, teamKey(config), `${d.why}. PR: ${pr.html_url}`, env);
@@ -93,6 +93,7 @@ export async function target(number, env, call = rest) {
   const pr = await call(`/pulls/${number}`, {}, env);
   if (pr.state !== "open") throw new Error(`PR #${number} is ${pr.state}`);
   if (pr.head.repo?.full_name !== env.GITHUB_REPOSITORY) throw new Error(`PR #${number} comes from another repo`);
+  if (!ticketOf(pr.head.ref)) throw new Error(`${pr.head.ref} names no ticket`);
   return JSON.stringify({ identifier: ticketOf(pr.head.ref), title: pr.title, branch: pr.head.ref, pr: pr.number }) + "\n";
 }
 

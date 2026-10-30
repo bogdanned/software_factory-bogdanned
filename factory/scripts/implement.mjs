@@ -1,12 +1,10 @@
 #!/usr/bin/env node
 // The implement workflow's plain code. `pick` takes the next ticket, `finish`
-// turns the agent's commits into a draft PR (or, with --pr, pushes a fix round
-// onto that PR's branch), `escalate` hands a ticket back.
+// turns the agent's commits into a draft PR, `escalate` hands a ticket back.
 // The agent itself never pushes and never sees the push token.
 //
 //   node factory/scripts/implement.mjs pick [BBD-12]                      # {identifier,title,branch} or null
 //   node factory/scripts/implement.mjs finish BBD-12 factory/bbd-12-slug --spec spec.md --question factory-out/question.md --execution out.json
-//   node factory/scripts/implement.mjs finish BBD-12 factory/bbd-12-slug --question factory-out/question.md --pr 14
 //   node factory/scripts/implement.mjs escalate BBD-12 "the run failed"
 
 import fs from "node:fs";

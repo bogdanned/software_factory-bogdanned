@@ -3,7 +3,6 @@
 // refuses anything above the limits in factory.config.yml.
 //
 //   node factory/scripts/agent.mjs refiner --spec factory-in/ticket.md [--question factory-out/question.md]
-//   node factory/scripts/agent.mjs implementor --spec spec.md --question q.md --failures failures.md   # a fix round
 //
 // Writes prompt, claude_args and timeout_minutes to $GITHUB_OUTPUT (prints them
 // when it is unset). With mcp_servers, writes $RUNNER_TEMP/mcp.json holding only

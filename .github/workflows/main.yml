@@ -45,6 +45,17 @@ jobs:
       - run: npm run db:migrate
       - run: npm run db:seed
       - run: npm test
+  
+  fallow:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - run: npx --yes fallow@3.37.0 audit --base "origin/$BASE_REF"
+        env:
+          BASE_REF: ${{ github.base_ref }}
 
   e2e:
     needs: test

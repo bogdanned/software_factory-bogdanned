@@ -1,0 +1,89 @@
+name: Factory review
+# Every factory PR gets a review from an agent that never saw how it was built:
+# it reads only the ticket and the diff. Plain code posts the verdict.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# It comments and sets a status. It can never approve a PR.
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+
+# A new push to the branch cancels the review of the old one.
+concurrency:
+  group: factory-review-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: startsWith(github.head_ref, 'factory/') && github.event.pull_request.head.repo.full_name == github.repository && vars.FACTORY_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BRANCH: ${{ github.head_ref }}
+      BASE_REF: ${{ github.base_ref }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.event.pull_request.head.sha }}", fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+
+      - name: Load the ticket and the diff
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          # The ticket id from the branch: factory/bbd-12-sort-the-board → BBD-12
+          ticket=$(echo "$BRANCH" | cut -d/ -f2 | cut -d- -f1,2 | tr '[:lower:]' '[:upper:]')
+          # The ticket, as the implementor got it
+          node factory/scripts/linear.mjs spec "$ticket" > "$RUNNER_TEMP/spec.md"
+          # The change: only the diff, never the implementor's log, plan or PR body
+          git diff "origin/$BASE_REF...HEAD" > "$RUNNER_TEMP/pr.diff"
+          # A review.json committed in the PR must never count as the verdict
+          rm -f factory-out/review.json
+
+      - name: Prepare the reviewer
+        id: agent
+        run: node factory/scripts/agent.mjs reviewer --spec "$RUNNER_TEMP/spec.md"
+
+      # The reviewer sees the repo, the ticket and the diff. A failed run leaves no review.json.
+      - name: Run the reviewer
+        uses: anthropics/claude-code-action@v1
+        continue-on-error: true
+        timeout-minutes: ${{ fromJSON(steps.agent.outputs.timeout_minutes) }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: ${{ steps.agent.outputs.prompt }}
+          claude_args: ${{ steps.agent.outputs.claude_args }}
+
+      - name: Post the review
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # Check review.json: prints success, failure or error and writes the comment
+          state=$(node factory/scripts/review-report.mjs factory-out/review.json "$RUNNER_TEMP/comment.md")
+          # One comment on the PR
+          gh pr comment "$PR_URL" --body-file "$RUNNER_TEMP/comment.md"
+          # The factory/ai-review status on the PR's last commit
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state="$state" -f context=factory/ai-review -f description="Reviewer agent: $state" -f target_url="$RUN_URL"
+          # The job fails only when the review asks for changes
+          [ "$state" != failure ]
+
+  # Your own PRs get no AI review: a green status, so the required check never blocks them.
+  not-factory:
+    if: ${{ !startsWith(github.head_ref, 'factory/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # factory/ai-review: success, not a factory PR
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=success -f context=factory/ai-review -f description="Not a factory PR: no AI review"

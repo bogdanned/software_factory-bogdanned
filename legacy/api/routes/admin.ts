@@ -23,3 +23,8 @@ admin.get("/admin/outbox", requireAdmin, async (req, res) => {
   );
   res.json({ emails });
 });
+
+admin.post("/admin/feedback/:id/ship", async (req, res) => {
+  await sql(`UPDATE feedback SET status = 'shipped', shipped_at = now() WHERE id = $1`, [Number(req.params.id)]);
+  res.json({ ok: true });
+});

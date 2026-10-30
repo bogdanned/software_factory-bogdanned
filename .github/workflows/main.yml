@@ -69,3 +69,14 @@ jobs:
       - run: npm run db:seed
       - run: npm run build
       - run: npm run e2e
+
+  fallow:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - run: npx --yes fallow audit --base "origin/$BASE_REF"
+        env:
+          BASE_REF: ${{ github.base_ref }}

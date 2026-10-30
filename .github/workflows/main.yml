@@ -77,6 +77,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - run: npx --yes fallow@3.37.0 audit --base "origin/$BASE_REF"
+      - run: npx --yes fallow audit --base "origin/$BASE_REF"
         env:
           BASE_REF: ${{ github.base_ref }}

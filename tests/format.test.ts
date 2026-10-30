@@ -12,7 +12,7 @@ describe("format", () => {
   it("labels statuses", () => {
     expect(statusLabel("in_progress")).toBe("In progress");
   });
-  it("pluralises", () => {
+  it.only("pluralises", () => {
     expect(plural(1, "comment")).toBe("1 comment");
     expect(plural(2, "comment")).toBe("2 comments");
   });

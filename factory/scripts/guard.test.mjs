@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { addedLines, guard, isTest, parseChanges, violations } from "./guard.mjs";
+import { addedLines, guard, guardSettings, isTest, parseChanges, violations } from "./guard.mjs";
 
 const CONFIG = fs.readFileSync(new URL("../../factory.config.yml", import.meta.url), "utf8");
 const diffAdding = (file, ...lines) => `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -1,0 +1,${lines.length} @@\n${lines.map((l) => `+${l}`).join("\n")}\n`;
@@ -28,19 +28,36 @@ describe("guard", () => {
   });
   test(".skip( and .only( fail in a test file only", () => {
     assert.deepEqual(check("M\ttests/feedback.test.ts\n", diffAdding("tests/feedback.test.ts", call("test", "only"), call("describe", "skip"))), [
-      "tests/feedback.test.ts: adds .skip( or .only( to a test",
+      "tests/feedback.test.ts: adds .only( to a test",
+      "tests/feedback.test.ts: adds .skip( to a test",
     ]);
-    assert.deepEqual(check("M\te2e/board.spec.ts\n", diffAdding("e2e/board.spec.ts", call("test", "skip"))), ["e2e/board.spec.ts: adds .skip( or .only( to a test"]);
+    assert.deepEqual(check("M\te2e/board.spec.ts\n", diffAdding("e2e/board.spec.ts", call("test", "skip"))), ["e2e/board.spec.ts: adds .skip( to a test"]);
     assert.deepEqual(check("M\tlib/api.ts\n", diffAdding("lib/api.ts", "const rows = list.only(1);")), []);
   });
   test("@ts-ignore, @ts-expect-error and eslint-disable fail anywhere", () => {
     const diff = diffAdding("lib/api.ts", "// @ts-ignore", "// @ts-expect-error") + diffAdding("app/page.tsx", "// eslint-disable-next-line no-console");
-    assert.deepEqual(check("M\tlib/api.ts\nM\tapp/page.tsx\n", diff), ["lib/api.ts: adds @ts-ignore or @ts-expect-error", "app/page.tsx: adds eslint-disable"]);
+    assert.deepEqual(check("M\tlib/api.ts\nM\tapp/page.tsx\n", diff), ["lib/api.ts: adds @ts-ignore", "lib/api.ts: adds @ts-expect-error", "app/page.tsx: adds eslint-disable"]);
   });
   test("deleting a test file fails, renaming one to another test does not", () => {
     assert.deepEqual(check("D\ttests/format.test.ts\n"), ["tests/format.test.ts: deletes a test file"]);
     assert.deepEqual(check("R090\ttests/format.test.ts\tlib/format.ts\n"), ["tests/format.test.ts: deletes a test file"]);
     assert.deepEqual(check("R100\ttests/format.test.ts\ttests/fmt.test.ts\nD\tlib/old.ts\n"), []);
+  });
+  test("the rules come from the guard: section of factory.config.yml", () => {
+    assert.deepEqual(guardSettings(CONFIG), {
+      branchPrefix: "factory/",
+      forbidInTests: [".skip(", ".only("],
+      forbid: ["@ts-ignore", "@ts-expect-error", "eslint-disable"],
+      protectTests: true,
+    });
+    const custom = "protected_paths:\n  - infra/\nguard:\n  # comment lines are ignored\n  branch_prefix: bot/\n  forbid: ['console.log']\n  protect_tests: false\n";
+    assert.deepEqual(guardSettings(custom), { branchPrefix: "bot/", forbidInTests: [".skip(", ".only("], forbid: ["console.log"], protectTests: false });
+    const run = (args) => (args.includes("--name-status") ? "D\ttests/a.test.ts\n" : diffAdding("lib/a.ts", "console.log(1); // eslint-disable-line"));
+    assert.deepEqual(guard({ HEAD_REF: "bot/x" }, run, custom), ["lib/a.ts: adds console.log"]);
+    assert.equal(guard({ HEAD_REF: "factory/x" }, run, custom), null);
+  });
+  test("a config without a guard: section keeps today's rules", () => {
+    assert.deepEqual(guardSettings("protected_paths:\n  - .github/\n"), guardSettings(CONFIG));
   });
   test("removed lines and deleted files never count as added", () => {
     assert.deepEqual(addedLines("+++ /dev/null\n+// @ts-ignore\n-// eslint-disable\n"), []);

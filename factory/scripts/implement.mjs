@@ -15,7 +15,7 @@ import { configList } from "./refine.mjs";
 
 export const LABELS = { ready: "factory:ready", inProgress: "factory:in-progress", inReview: "factory:in-review", escalated: "factory:escalated" };
 const ID = /^[A-Z][A-Z0-9]*-\d+$/;
-const USAGE = "usage: implement.mjs pick [id] | finish <id> <branch> [--spec f] [--question f] [--execution f] [--pr n] | escalate <id> <message>";
+const USAGE = "usage: implement.mjs pick [id] | finish <id> <branch> [--spec f] [--question f] [--execution f] | escalate <id> <message>";
 const runUrl = (env) => (env.GITHUB_RUN_ID ? `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}` : "a local run");
 
 // factory/<id lowercase>-<slug of the title>, at most 60 characters.
@@ -92,12 +92,6 @@ export function refusal(base, question, env = process.env, run = git) {
   return bad.length ? `The implementor changed protected files, nothing was pushed: ${bad.join(", ")}` : null;
 }
 
-const pushToken = (env) => {
-  if (!env.FACTORY_GH_TOKEN) throw new Error("FACTORY_GH_TOKEN is not set");
-  return env.FACTORY_GH_TOKEN;
-};
-const remote = (env) => `https://x-access-token:${pushToken(env)}@github.com/${env.GITHUB_REPOSITORY}.git`;
-
 // After the agent ran on the current branch: no commits or a protected file → escalate;
 // otherwise push with FACTORY_GH_TOKEN, open a draft PR, move the ticket to in-review.
 export async function finish(id, branch, { spec, question, execution } = {}, env = process.env, deps = { git, fetchFn: fetch }) {
@@ -105,8 +99,9 @@ export async function finish(id, branch, { spec, question, execution } = {}, env
   const stop = refusal(env.BASE_SHA || "origin/main", question, env, deps.git);
   if (stop) return escalate(id, issue.team.key, stop, env);
 
-  const token = pushToken(env);
-  deps.git(["push", "--force-with-lease", remote(env), `HEAD:refs/heads/${branch}`], env);
+  const token = env.FACTORY_GH_TOKEN;
+  if (!token) throw new Error("FACTORY_GH_TOKEN is not set");
+  deps.git(["push", "--force-with-lease", `https://x-access-token:${token}@github.com/${env.GITHUB_REPOSITORY}.git`, `HEAD:refs/heads/${branch}`], env);
   const body = prBody({ identifier: issue.identifier, spec: spec && fs.existsSync(spec) ? fs.readFileSync(spec, "utf8") : "", cost: execution && fs.existsSync(execution) ? costOf(fs.readFileSync(execution, "utf8")) : "unknown", run: runUrl(env) });
   const res = await deps.fetchFn(`https://api.github.com/repos/${env.GITHUB_REPOSITORY}/pulls`, {
     method: "POST",
@@ -126,7 +121,8 @@ export async function finishFix(id, branch, pr, { question } = {}, env = process
   const issue = await getIssue(id, teamKey());
   const stop = refusal(env.BASE_SHA || `origin/${branch}`, question, env, deps.git);
   if (stop) return escalate(id, issue.team.key, `Fix round on PR #${pr}: ${stop}`, env);
-  deps.git(["push", remote(env), `HEAD:refs/heads/${branch}`], env);
+  if (!env.FACTORY_GH_TOKEN) throw new Error("FACTORY_GH_TOKEN is not set");
+  deps.git(["push", `https://x-access-token:${env.FACTORY_GH_TOKEN}@github.com/${env.GITHUB_REPOSITORY}.git`, `HEAD:refs/heads/${branch}`], env);
   return `${issue.identifier}: fix pushed to PR #${pr}\n`;
 }
 

@@ -138,3 +138,26 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node factory/scripts/ready.mjs
+
+  # Factory drafts only: a red check gives the implementor another round, up to
+  # limits.max_fix_rounds. A red guard or the last round hands the ticket to a human.
+  fix:
+    needs: [lint, typecheck, test, e2e, fallow, guard]
+    if: failure() && github.event_name == 'pull_request' && startsWith(github.head_ref, 'factory/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # actions: write starts the fix round; a workflow_dispatch from GITHUB_TOKEN does start a run.
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node factory/scripts/fix.mjs decide

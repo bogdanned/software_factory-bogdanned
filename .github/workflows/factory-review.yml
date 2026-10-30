@@ -51,6 +51,7 @@ jobs:
 
       # The reviewer sees the repo, the ticket and the diff. A failed run leaves no review.json.
       - name: Run the reviewer
+        id: claude
         uses: anthropics/claude-code-action@v1
         continue-on-error: true
         timeout-minutes: ${{ fromJSON(steps.agent.outputs.timeout_minutes) }}
@@ -60,6 +61,9 @@ jobs:
           prompt: ${{ steps.agent.outputs.prompt }}
           claude_args: ${{ steps.agent.outputs.claude_args }}
 
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with: { name: debug, path: "${{ steps.claude.outputs.execution_file }}" }
       - name: Post the review
         if: ${{ !cancelled() }}
         env:

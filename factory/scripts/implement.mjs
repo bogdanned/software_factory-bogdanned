@@ -121,8 +121,10 @@ export async function finishFix(id, branch, pr, { question } = {}, env = process
   const issue = await getIssue(id, teamKey());
   const stop = refusal(env.BASE_SHA || `origin/${branch}`, question, env, deps.git);
   if (stop) return escalate(id, issue.team.key, `Fix round on PR #${pr}: ${stop}`, env);
-  if (!env.FACTORY_GH_TOKEN) throw new Error("FACTORY_GH_TOKEN is not set");
-  deps.git(["push", `https://x-access-token:${env.FACTORY_GH_TOKEN}@github.com/${env.GITHUB_REPOSITORY}.git`, `HEAD:refs/heads/${branch}`], env);
+  const token = env.FACTORY_GH_TOKEN;
+  if (!token) throw new Error("FACTORY_GH_TOKEN is not set");
+  const remote = `https://x-access-token:${token}@github.com/${env.GITHUB_REPOSITORY}.git`;
+  deps.git(["push", remote, `HEAD:refs/heads/${branch}`], env);
   return `${issue.identifier}: fix pushed to PR #${pr}\n`;
 }
 

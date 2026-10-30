@@ -39,29 +39,37 @@ jobs:
       actions: read
       pull-requests: read
     outputs:
-      ticket: ${{ steps.pick.outputs.ticket }}
-      failures: ${{ steps.pick.outputs.failures }}
+      ticket: ${{ steps.fixround.outputs.ticket || steps.pick.outputs.ticket }}
+      failures: ${{ steps.fixround.outputs.failures }}
     steps:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      - id: pick
+      # A fix round: the PR's ticket and the red jobs' logs.
+      - id: fixround
+        if: inputs.pr
         env:
-          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TICKET: ${{ inputs.ticket }}
           PR: ${{ inputs.pr }}
           CI_RUN: ${{ inputs.ci_run }}
         run: |
-          if [ -n "$PR" ]; then
-            [[ "$PR" =~ ^[0-9]+$ && "$CI_RUN" =~ ^[0-9]+$ ]] || { echo "::error::a fix round needs a PR number and a CI run id"; exit 1; }
-            ticket=$(node factory/scripts/fix.mjs target "$PR")
-            node factory/scripts/fix.mjs failures "$CI_RUN"
-            echo "fix round on PR #$PR: $ticket"
-            echo "ticket=$ticket" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          # Stop unless both inputs are numbers
+          [[ "$PR" =~ ^[0-9]+$ && "$CI_RUN" =~ ^[0-9]+$ ]] || { echo "::error::a fix round needs a PR number and a CI run id"; exit 1; }
+          # The ticket of the PR's branch
+          ticket=$(node factory/scripts/fix.mjs target "$PR")
+          echo "fix round on PR #$PR: $ticket"
+          echo "ticket=$ticket" >> "$GITHUB_OUTPUT"
+          # The red jobs' logs, as the failures output
+          node factory/scripts/fix.mjs failures "$CI_RUN"
+
+      # A normal run: the oldest factory:ready ticket, or the one asked for.
+      - id: pick
+        if: ${{ !inputs.pr }}
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          TICKET: ${{ inputs.ticket }}
+        run: |
           if [ -n "$TICKET" ]; then
             [[ "$TICKET" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]] || { echo "::error::not a ticket id: $TICKET"; exit 1; }
           fi
@@ -93,21 +101,26 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
 
-      # A fix round continues the PR's branch, with the red jobs' logs next to the ticket.
       - name: Branch and load the ticket
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-          FAILURES: ${{ needs.pick.outputs.failures }}
         run: |
           git config user.name "factory[bot]"
           git config user.email "factory@users.noreply.github.com"
+          # A fix round continues the PR's branch, a new ticket starts one
           if [ -n "$PR" ]; then git switch "$BRANCH"; else git switch -c "$BRANCH"; fi
+          # Where the agent's own commits start
           echo "BASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           mkdir -p factory-out
           { echo "<<<TICKET"; node factory/scripts/linear.mjs spec "$TICKET"; echo "TICKET>>>"; } > "$RUNNER_TEMP/spec.md"
-          if [ -n "$PR" ]; then
-            { echo "<<<CI"; printf '%s\n' "$FAILURES"; echo "CI>>>"; } > "$RUNNER_TEMP/failures.md"
-          fi
+
+      # A fix round: the red jobs' logs, next to the ticket.
+      - name: Load the CI failures
+        if: inputs.pr
+        env:
+          FAILURES: ${{ needs.pick.outputs.failures }}
+        run: |
+          { echo "<<<CI"; printf '%s\n' "$FAILURES"; echo "CI>>>"; } > "$RUNNER_TEMP/failures.md"
 
       - run: npm ci
       - run: npm run db:migrate && npm run db:seed

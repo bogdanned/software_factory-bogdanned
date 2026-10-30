@@ -97,8 +97,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          # Do nothing unless factory.config.yml says auto_ready: true
           grep -q '^auto_ready: true' factory.config.yml || { echo "auto_ready is off"; exit 0; }
+          # Take the PR out of draft
           gh pr ready "$PR_NUMBER"
+          # Say why on the PR
           gh pr comment "$PR_NUMBER" --body "All gates green: marked ready for review."
 
   # Factory drafts only: a red check gives the implementor another round, up to
@@ -119,4 +122,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: node factory/scripts/fix.mjs decide
+        run: |
+          # Another implementor round, or escalate the ticket to a human
+          node factory/scripts/fix.mjs decide

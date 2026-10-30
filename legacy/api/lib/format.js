@@ -23,3 +23,4 @@ export function statusLabel(status) {
 export function plural(n, word) {
   return n + " " + (n == 1 ? word : word + "s");
 }
+// throwaway

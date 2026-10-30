@@ -43,12 +43,9 @@ export async function ready(env, config, call = gh) {
   const pr = repository.pullRequest;
   const why = skipReason(pr, env.HEAD_SHA);
   if (why) return `ready: nothing to do, ${why}.`;
-  await call(
-    `mutation($id: ID!, $body: String!) {
-      markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId }
-      addComment(input: { subjectId: $id, body: $body }) { clientMutationId } }`,
-    { id: pr.id, body: "All gates green: marked ready for review." },
-  );
+  // Two calls: the comment only goes up once the PR really left draft.
+  await call(`mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }`, { id: pr.id });
+  await call(`mutation($id: ID!, $body: String!) { addComment(input: { subjectId: $id, body: $body }) { clientMutationId } }`, { id: pr.id, body: "All gates green: marked ready for review." });
   return `ready: PR #${env.PR_NUMBER} is ready for review.`;
 }
 

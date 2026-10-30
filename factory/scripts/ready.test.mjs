@@ -34,8 +34,20 @@ describe("ready", () => {
     const gh = fakeGitHub(PR);
     assert.equal(await ready(ENV, ON, gh.call), "ready: PR #12 is ready for review.");
     assert.deepEqual(gh.calls[0].variables, { owner: "acme", name: "bugboard", number: 12 });
-    assert.match(gh.calls[1].query, /markPullRequestReadyForReview[\s\S]*addComment/);
-    assert.deepEqual(gh.calls[1].variables, { id: "PR_1", body: "All gates green: marked ready for review." });
+    assert.match(gh.calls[1].query, /markPullRequestReadyForReview/);
+    assert.deepEqual(gh.calls[1].variables, { id: "PR_1" });
+    assert.match(gh.calls[2].query, /addComment/);
+    assert.deepEqual(gh.calls[2].variables, { id: "PR_1", body: "All gates green: marked ready for review." });
+  });
+  test("no comment when GitHub refuses to undraft", async () => {
+    const calls = [];
+    const call = async (query) => {
+      calls.push(query);
+      if (query.includes("markPullRequestReadyForReview")) throw new Error("GitHub 200: Resource not accessible by integration");
+      return { repository: { pullRequest: PR } };
+    };
+    await assert.rejects(ready(ENV, ON, call), /not accessible/);
+    assert.equal(calls.some((q) => q.includes("addComment")), false);
   });
   test("switched off or not a factory draft: GitHub is only read, never changed", async () => {
     const off = fakeGitHub(PR);

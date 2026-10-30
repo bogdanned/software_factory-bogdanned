@@ -15,7 +15,8 @@
     "db:seed": "tsx --env-file-if-exists=.env db/seed.mts",
     "seed:backlog": "node --env-file-if-exists=.env scripts/seed-backlog.mjs",
     "linear:labels": "node --env-file-if-exists=.env scripts/linear-labels.mjs",
-    "factory:metrics": "node factory/scripts/metrics.mjs"
+    "factory:metrics": "node factory/scripts/metrics.mjs",
+    "factory:test": "node --test factory/scripts/*.test.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.1147.0",

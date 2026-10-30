@@ -4,8 +4,17 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+# A new push to a PR cancels the run it supersedes.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,6 +24,7 @@ jobs:
       - run: npm run lint
 
   typecheck:
+    timeout-minutes: 10
     needs: lint
     runs-on: ubuntu-latest
     steps:
@@ -25,6 +35,7 @@ jobs:
       - run: npm run typecheck
 
   test:
+    timeout-minutes: 15
     needs: typecheck
     runs-on: ubuntu-latest
     services:
@@ -47,6 +58,7 @@ jobs:
       - run: npm test
 
   e2e:
+    timeout-minutes: 20
     needs: test
     runs-on: ubuntu-latest
     services:
@@ -69,3 +81,39 @@ jobs:
       - run: npm run db:seed
       - run: npm run build
       - run: npm run e2e
+
+  # Fails on any new duplication, dead code or complexity. Inherited debt goes to the job summary.
+  fallow:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      # Fallow reads the source, it needs no npm ci. Pinned so a Fallow release can't turn PRs red.
+      - name: Audit the PR against its base
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set +e
+          npx --yes fallow@3.37.0 audit --base "origin/$BASE_REF" --format json --quiet > "$RUNNER_TEMP/fallow.json"
+          code=$?
+          set -e
+          node factory/scripts/fallow.mjs "$RUNNER_TEMP/fallow.json" "$code"
+
+  # Factory branches only: no protected paths, no skipped tests, no silenced checks, no deleted tests.
+  guard:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+        run: node factory/scripts/guard.mjs

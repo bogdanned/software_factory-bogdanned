@@ -42,6 +42,11 @@ export async function pick(team, wanted) {
       nodes { identifier title createdAt labels { nodes { name } } } } }`,
     { team, name: LABELS.ready },
   );
+  // pickFrom only sees ready tickets: tell a typo apart from a ticket that isn't ready.
+  if (wanted && !issues.nodes.some((i) => i.identifier === wanted)) {
+    const found = await gql(`query($id: String!) { issue(id: $id) { identifier } }`, { id: wanted }).catch(() => null);
+    if (!found?.issue) throw new Error(`${wanted} not found in Linear: check the ticket id`);
+  }
   const issue = pickFrom(issues.nodes, wanted);
   if (!issue) return "null\n";
   await label(issue.identifier, team, [LABELS.inProgress], [LABELS.ready]);

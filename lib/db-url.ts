@@ -1,3 +1,4 @@
+// eslint-disable-next-line no-console
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";

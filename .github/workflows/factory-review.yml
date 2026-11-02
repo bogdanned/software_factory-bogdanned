@@ -72,12 +72,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          # Check review.json: prints success, failure or error and writes the comment
-          state=$(node factory/scripts/review-report.mjs factory-out/review.json "$RUNNER_TEMP/comment.md")
-          # One comment on the PR
-          gh pr comment "$PR_URL" --body-file "$RUNNER_TEMP/comment.md"
-          # The factory/ai-review status on the PR's last commit
-          gh api --silent "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state="$state" -f context=factory/ai-review -f description="Reviewer agent: $state" -f target_url="$RUN_URL"
+          # Check review.json: prints success, failure or error and writes the review
+          state=$(node factory/scripts/review-report.mjs factory-out/review.json factory-out/pr.diff "$RUNNER_TEMP/review.json")
+          pulls="repos/$GITHUB_REPOSITORY/pulls/${PR_URL##*/}"
+          # Clear our old "changes requested" so only this review's verdict counts
+          for id in $(gh api "$pulls/reviews" --paginate --jq '.[] | select(.user.login == "github-actions[bot]" and .state == "CHANGES_REQUESTED") | .id'); do
+            gh api --silent -X PUT "$pulls/reviews/$id/dismissals" -f message="Superseded by a newer factory review" -f event=DISMISS
+          done
+          # A real PR review: the summary, and each finding inline on its line
+          review_url=$(gh api "$pulls/reviews" --input "$RUNNER_TEMP/review.json" --jq .html_url)
+          # The factory/ai-review status on the PR's last commit; Details opens the review
+          gh api --silent "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state="$state" -f context=factory/ai-review -f description="Reviewer agent: $state" -f target_url="$review_url"
           # The job fails only when the review asks for changes
           [ "$state" != failure ]
 

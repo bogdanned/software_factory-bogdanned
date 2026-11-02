@@ -1,9 +1,16 @@
 name: Factory review fix
-# You asked for it: add the factory:fix label to a factory PR and the implementor
-# fixes the latest review's findings. Same rules and fix-round budget as CI's fix job.
+# You asked for it: add the factory:fix label to a factory PR (or run this workflow
+# by hand with the PR number) and the implementor fixes the latest review's findings.
+# Same rules and fix-round budget as CI's fix job.
 on:
   pull_request:
     types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Number of the factory PR to fix
+        required: true
+        type: number
 
 # Reads the review, removes the label. The push uses FACTORY_GH_TOKEN, not these.
 permissions:
@@ -11,11 +18,11 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: factory-review-fix-${{ github.head_ref }}
+  group: factory-review-fix-${{ inputs.pr || github.event.pull_request.number }}
 
 jobs:
   fix:
-    if: github.event.label.name == 'factory:fix' && startsWith(github.head_ref, 'factory/') && github.event.pull_request.head.repo.full_name == github.repository && vars.FACTORY_PAUSED != 'true'
+    if: (github.event_name == 'workflow_dispatch' || github.event.label.name == 'factory:fix') && vars.FACTORY_PAUSED != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -26,24 +33,36 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U bugboard" --health-interval 2s --health-retries 20
     env:
-      BRANCH: ${{ github.head_ref }}
-      BASE_REF: ${{ github.base_ref }}
-      PR_URL: ${{ github.event.pull_request.html_url }}
-      PULLS: repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}
+      PR: ${{ inputs.pr || github.event.pull_request.number }}
+      PULLS: repos/${{ github.repository }}/pulls/${{ inputs.pr || github.event.pull_request.number }}
       DATABASE_URL: postgres://bugboard:bugboard@localhost:5432/bugboard
       SESSION_SECRET: ci
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
     steps:
+      # Label or manual run, the PR must be an open factory PR from this repo
+      - name: Find the PR
+        run: |
+          read -r branch base url fork state < <(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
+            --json headRefName,baseRefName,url,isCrossRepository,state \
+            --jq '"\(.headRefName) \(.baseRefName) \(.url) \(.isCrossRepository) \(.state)"')
+          if [[ "$branch" != factory/* || "$fork" != false || "$state" != OPEN ]]; then
+            echo "::error::PR #$PR is not an open factory/* PR from this repo"
+            exit 1
+          fi
+          { echo "BRANCH=$branch"; echo "BASE_REF=$base"; echo "PR_URL=$url"; } >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
-        with: { ref: "${{ github.head_ref }}", fetch-depth: 0, persist-credentials: false }
+        with: { ref: "${{ env.BRANCH }}", fetch-depth: 0, persist-credentials: false }
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
 
       - name: Take the label off, count the fix rounds
         run: |
           # One label = one round: remove it so the next round needs a new click
-          gh pr edit "$PR_URL" --remove-label factory:fix
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            gh pr edit "$PR_URL" --remove-label factory:fix
+          fi
           # The ticket id from the branch: factory/bbd-12-sort-the-board → BBD-12
           ticket=$(echo "$BRANCH" | cut -d/ -f2 | cut -d- -f1,2 | tr '[:lower:]' '[:upper:]')
           echo "TICKET=$ticket" >> "$GITHUB_ENV"

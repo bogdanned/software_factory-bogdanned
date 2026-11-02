@@ -6,7 +6,7 @@
 Run an AI software factory on **<repo>** in **shadow mode** for **two weeks** on **10 tickets** that I pick and label by hand. It opens **draft PRs only**. Nothing merges without a human review, exactly as today. At the end I share the numbers and a recommendation, and we decide together whether to continue, change or stop.
 
 ## What it does
-A labelled ticket → an AI agent (Claude Code) in a fresh GitHub Actions runner writes the change → our existing CI checks it → a second AI agent reviews it → a draft PR appears for a human. If checks fail, the agent gets at most **3** attempts to fix them, then hands the ticket back to a human.
+A labelled ticket → an AI agent (Claude Code) in a fresh GitHub Actions runner writes the change → our existing CI checks it → a second AI agent reviews it → a draft PR appears for a human. If checks fail, the agent gets at most **3** attempts to fix them, then hands the ticket back to a human. After the review, a human decides whether the agent should fix its findings. If so, they start a fix run by hand: add the `factory:fix` label to the PR, or run the *Factory review fix* workflow with the PR number. Each fix run is one round, and it counts toward the same 3.
 
 ## The controls
 

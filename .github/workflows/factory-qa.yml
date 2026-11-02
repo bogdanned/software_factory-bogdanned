@@ -77,6 +77,11 @@ jobs:
           ticket=$(echo "$BRANCH" | cut -d/ -f2 | cut -d- -f1,2 | tr '[:lower:]' '[:upper:]')
           node factory/scripts/linear.mjs spec "$ticket" > qa-out/spec.md
 
+      # The browser records a video of the session: Playwright's ffmpeg, the MCP's version
+      - name: Install ffmpeg for the video
+        if: steps.spec.outcome == 'success'
+        run: npx -y "playwright@$(npm view @playwright/mcp@0.0.84 dependencies.playwright)" install ffmpeg
+
       - name: Prepare the QA agent
         id: agent
         if: steps.spec.outcome == 'success'
@@ -106,9 +111,12 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           STACK: ${{ steps.spec.outcome == 'success' && 'success' || 'failure' }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
         run: |
+          # Screenshots and the video onto Linear's file storage: they show and play on the PR
+          node factory/scripts/linear.mjs upload qa-out/media > "$RUNNER_TEMP/media.json" || echo '{}' > "$RUNNER_TEMP/media.json"
           # Prints success, failure or error and writes the comment
-          state=$(node factory/scripts/qa-report.mjs "$STACK" qa-out/qa.json qa-out/checks.json "$RUNNER_TEMP/comment.md")
+          state=$(node factory/scripts/qa-report.mjs "$STACK" qa-out/qa.json qa-out/checks.json "$RUNNER_TEMP/comment.md" "$RUNNER_TEMP/media.json")
           gh pr comment "$PR_URL" --body-file "$RUNNER_TEMP/comment.md"
           gh api --silent "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state="$state" -f context=factory/qa -f description="QA agent: $state" -f target_url="$RUN_URL"
           # The job fails only on a failed criterion; "QA could not run" stays green

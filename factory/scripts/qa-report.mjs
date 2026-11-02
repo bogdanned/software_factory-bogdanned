@@ -2,7 +2,10 @@
 // Plain code, no AI: joins the QA agent's verdicts with the re-run of its checks,
 // writes the PR comment and prints the state of the factory/qa status.
 //
-//   node factory/scripts/qa-report.mjs <stack outcome> qa-out/qa.json qa-out/checks.json comment.md
+//   node factory/scripts/qa-report.mjs <stack outcome> qa-out/qa.json qa-out/checks.json comment.md [media.json]
+//
+// media.json maps a local file to its uploaded URL (linear.mjs upload): the screenshots
+// and the browser's video become links that open in the browser.
 //
 // Prints failure (a criterion failed), success, or error (QA could not run).
 
@@ -57,8 +60,11 @@ export function judge(qa, checks) {
 
 const cell = (text) => String(text ?? "").replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
 
+// A screenshot as a link when it was uploaded, else its path. Linear's files open for anyone signed in to Linear.
+const shot = (file, media) => (media[file] ? `[Screenshot](${media[file]})` : cell(file));
+
 // The status state and the PR comment.
-export function report({ stack, qa, checks, runUrl = "" }) {
+export function report({ stack, qa, checks, media = {}, runUrl = "" }) {
   if (stack !== "success") return { state: "error", comment: `${COULD_NOT_RUN} The app or the ticket never loaded (install, migrate, seed, build, start or Linear failed). [Run](${runUrl})\n` };
   const problems = checkQa(qa);
   if (problems.length) return { state: "error", comment: `${COULD_NOT_RUN} ${problems.join("; ")}. [Run](${runUrl})\n` };
@@ -69,18 +75,20 @@ export function report({ stack, qa, checks, runUrl = "" }) {
   const table = [
     "| # | Result | Agent | Check | Observed | Evidence |",
     "|---|---|---|---|---|---|",
-    ...rows.map((r) => `| ${r.criterion} | ${ICON[r.result]} | ${r.verdict} | ${r.check} | ${cell(r.observed)} | ${cell(r.screenshot)} |`),
+    ...rows.map((r) => `| ${r.criterion} | ${ICON[r.result]} | ${r.verdict} | ${r.check} | ${cell(r.observed)} | ${shot(r.screenshot, media)} |`),
   ];
-  return { state, comment: `${title}\n\n${table.join("\n")}\n\nScreenshots and checks: the \`qa-out\` artifact of the [run](${runUrl}).\n` };
+  const videos = Object.keys(media).filter((f) => f.endsWith(".webm")).map((f, i) => `[▶ Video ${i + 1}](${media[f]})`);
+  const video = videos.length ? `**The QA session:** ${videos.join(" · ")}\n\n` : "";
+  return { state, comment: `${title}\n\n${table.join("\n")}\n\n${video}Screenshots, video and checks: the \`qa-out\` artifact of the [run](${runUrl}).\n` };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const [stack, qaFile, checksFile, commentFile] = process.argv.slice(2);
+  const [stack, qaFile, checksFile, commentFile, mediaFile] = process.argv.slice(2);
   if (!commentFile) {
-    console.error("usage: qa-report.mjs <stack outcome> <qa.json> <checks.json> <comment.md>");
+    console.error("usage: qa-report.mjs <stack outcome> <qa.json> <checks.json> <comment.md> [media.json]");
     process.exit(1);
   }
-  const { state, comment } = report({ stack, qa: readJson(qaFile), checks: readJson(checksFile), runUrl: process.env.RUN_URL });
+  const { state, comment } = report({ stack, qa: readJson(qaFile), checks: readJson(checksFile), media: (mediaFile && readJson(mediaFile)) || {}, runUrl: process.env.RUN_URL });
   fs.writeFileSync(commentFile, comment);
   console.log(state);
 }

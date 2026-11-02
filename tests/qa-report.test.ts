@@ -39,4 +39,10 @@ describe("qa-report", () => {
     const nested = { suites: [{ file: "2.spec.ts", specs: [], suites: [{ specs: [{ ok: true }, { ok: false }] }] }] };
     expect(checkResults(nested)).toEqual({ 2: "fail" });
   });
+  it("uploaded media: the screenshot and the video are links", () => {
+    const media = { "qa-out/media/1.png": "https://uploads.linear.app/s", "qa-out/media/page.webm": "https://uploads.linear.app/v" };
+    const { comment } = report({ stack: "success", qa: [{ ...row(1, "pass"), screenshot: "qa-out/media/1.png" }], checks: checks({ 1: true }), media });
+    expect(comment).toContain("[Screenshot](https://uploads.linear.app/s)");
+    expect(comment).toContain("[▶ Video 1](https://uploads.linear.app/v)");
+  });
 });

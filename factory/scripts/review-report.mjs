@@ -1,21 +1,36 @@
 #!/usr/bin/env node
-// Plain code, no AI: checks the reviewer's review.json, writes the PR comment
-// and prints the state of the factory/ai-review status.
+// Plain code, no AI: checks the reviewer's review.json and turns it into a GitHub
+// PR review: a summary, each finding inline on its line, and what to do next.
 //
-//   node factory/scripts/review-report.mjs factory-out/review.json comment.md
+//   node factory/scripts/review-report.mjs factory-out/review.json factory-out/pr.diff review-payload.json
 //
 // Prints success (approve), failure (changes) or error (missing or invalid).
+// The payload is the body of POST /repos/{repo}/pulls/{n}/reviews. It never approves:
+// "changes" requests changes, everything else is a plain comment.
 
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const QUESTIONS = { 1: "Architecture", 2: "Duplication", 3: "Regression test", 4: "Security" };
 const FIELDS = ["question", "file", "problem", "fix"];
+const NEXT = {
+  failure:
+    "**What now:** fix each finding on this branch and push, or add the `factory:fix` label to let the implementor fix them (one fix round). The review runs again on every push; when it approves, `factory/ai-review` turns green and the merge unblocks.",
+  error: "**What now:** nothing was reviewed. Push again to retry, or review this PR yourself.",
+};
+
+export function readFile(file) {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+}
 
 // review.json as an object, or null when it is missing or not JSON.
 export function readReview(file) {
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    return JSON.parse(readFile(file));
   } catch {
     return null;
   }
@@ -34,30 +49,65 @@ export function checkReview(review) {
   return problems;
 }
 
-// One numbered line per finding: question, file, problem, fix.
-function findingLines(findings) {
-  return findings.map((f, i) => `${i + 1}. **${QUESTIONS[f.question] ?? `Question ${f.question}`}** \`${f.file}\`: ${f.problem}\n   Fix: ${f.fix}`);
+// The lines of the new code that the diff shows, per file. GitHub only takes
+// an inline comment on one of these.
+export function diffLines(diff) {
+  /** @type {Record<string, Set<number>>} */
+  const lines = {};
+  let file = null;
+  let line = 0;
+  for (const text of (diff ?? "").split("\n")) {
+    if (text.startsWith("+++ ")) {
+      file = text.startsWith("+++ b/") ? text.slice(6) : null;
+      if (file) lines[file] ??= new Set();
+    } else if (text.startsWith("@@")) {
+      line = Number(text.match(/\+(\d+)/)?.[1] ?? 0);
+    } else if (file && (text.startsWith("+") || text.startsWith(" "))) {
+      lines[file].add(line++);
+    }
+  }
+  return lines;
 }
 
-// The status state and the PR comment for one review.
-export function report(review) {
+// "path:12" or "path:12-15" → { path, line }
+export function parseLocation(location) {
+  const m = String(location).match(/^(.+?):(\d+)(?:-\d+)?$/);
+  return m ? { path: m[1], line: Number(m[2]) } : { path: String(location), line: null };
+}
+
+const title = (f) => `**${QUESTIONS[f.question] ?? `Question ${f.question}`}**`;
+
+// The review payload and the status state for one review.
+export function report(review, diff) {
   const problems = checkReview(review);
   if (problems.length) {
-    return { state: "error", comment: `**Factory review: the review could not run.** ${problems.join("; ")}.\n\nNothing was reviewed: check this PR yourself, or push again to retry.\n` };
+    return { state: "error", payload: { event: "COMMENT", body: `### Factory review: could not run\n\n${problems.join("; ")}.\n\n${NEXT.error}\n`, comments: [] } };
   }
   const state = review.verdict === "approve" ? "success" : "failure";
-  const title = state === "success" ? "**Factory review: approve.**" : "**Factory review: changes requested.**";
-  const body = review.findings.length ? findingLines(review.findings).join("\n") : "No findings.";
-  return { state, comment: `${title}\n\n${body}\n` };
+  const shown = diffLines(diff);
+  const comments = [];
+  const elsewhere = [];
+  review.findings.forEach((f, i) => {
+    const { path, line } = parseLocation(f.file);
+    if (line && shown[path]?.has(line)) comments.push({ path, line, side: "RIGHT", body: `${title(f)}: ${f.problem}\n\n**Fix:** ${f.fix}` });
+    else elsewhere.push(`${i + 1}. ${title(f)} \`${f.file}\`: ${f.problem}\n   **Fix:** ${f.fix}`);
+  });
+
+  const parts = [state === "success" ? "### Factory review: approve" : "### Factory review: changes requested"];
+  if (!review.findings.length) parts.push("No findings.");
+  if (comments.length) parts.push(`${comments.length} finding${comments.length > 1 ? "s" : ""} inline on the diff, in **Files changed**.`);
+  if (elsewhere.length) parts.push(`On lines outside the diff:\n\n${elsewhere.join("\n")}`);
+  if (NEXT[state]) parts.push(NEXT[state]);
+  return { state, payload: { event: state === "failure" ? "REQUEST_CHANGES" : "COMMENT", body: parts.join("\n\n") + "\n", comments } };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const [reviewFile, commentFile] = process.argv.slice(2);
-  if (!reviewFile || !commentFile) {
-    console.error("usage: review-report.mjs <review.json> <comment.md>");
+  const [reviewFile, diffFile, payloadFile] = process.argv.slice(2);
+  if (!reviewFile || !diffFile || !payloadFile) {
+    console.error("usage: review-report.mjs <review.json> <pr.diff> <payload.json>");
     process.exit(1);
   }
-  const { state, comment } = report(readReview(reviewFile));
-  fs.writeFileSync(commentFile, comment);
+  const { state, payload } = report(readReview(reviewFile), readFile(diffFile));
+  fs.writeFileSync(payloadFile, JSON.stringify(payload));
   console.log(state);
 }

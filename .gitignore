@@ -48,4 +48,5 @@ next-env.d.ts
 
 # factory run files, never committed
 factory-in/
-factory-out/qa-out/
+factory-out/
+qa-out/

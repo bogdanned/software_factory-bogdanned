@@ -27,7 +27,7 @@ describe("review-report", () => {
     expect(state).toBe("failure");
     expect(payload.event).toBe("REQUEST_CHANGES");
     expect(payload.comments).toEqual([{ path: "legacy/api/routes/admin.ts", line: 28, side: "RIGHT", body: "**Security**: No role check.\n\n**Fix:** Call requireAdmin first." }]);
-    expect(payload.body).toContain("`factory:fix`");
+    expect(payload.body).toContain("**What now:**");
   });
   it("a line outside the diff goes in the summary, not inline", () => {
     const { payload } = report({ verdict: "changes", findings: [{ ...finding, file: "legacy/api/session.ts:5" }] }, diff);

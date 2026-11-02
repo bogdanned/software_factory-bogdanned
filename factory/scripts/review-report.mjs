@@ -15,7 +15,7 @@ const QUESTIONS = { 1: "Architecture", 2: "Duplication", 3: "Regression test", 4
 const FIELDS = ["question", "file", "problem", "fix"];
 const NEXT = {
   failure:
-    "**What now:** fix each finding on this branch and push, or add the `factory:fix` label to let the implementor fix them (one fix round). The review runs again on every push; when it approves, `factory/ai-review` turns green and the merge unblocks.",
+    "**What now:** the implementor fixes the findings and pushes; after max_fix_rounds the ticket goes to a human (`factory:escalated` in Linear). You can also fix them yourself and push. The review runs again on every push; when it approves, `factory/ai-review` turns green and the merge unblocks.",
   error: "**What now:** nothing was reviewed. Push again to retry, or review this PR yourself.",
 };
 

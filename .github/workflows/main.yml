@@ -76,6 +76,9 @@ jobs:
     if: failure() && github.event_name == 'pull_request' && github.event.pull_request.draft && startsWith(github.head_ref, 'factory/')
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # One fix at a time per branch, shared with the review's fix job: two pushes would collide
+    concurrency:
+      group: factory-fix-${{ github.head_ref }}
     # actions: read for the red jobs' logs. The push uses FACTORY_GH_TOKEN, not these.
     permissions:
       contents: read

@@ -3,7 +3,7 @@ name: qa
 model: claude-sonnet-5-5
 allowed_tools: [mcp__playwright, Read, Glob, Write, Skill]
 mcp_servers: [playwright]
-max_turns: 40
+max_turns: 60
 timeout_minutes: 20
 skills: [bugboard-browser-qa]
 ---

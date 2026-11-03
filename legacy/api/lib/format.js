@@ -16,7 +16,7 @@ export function timeAgo(date, now) {
 }
 
 export function statusLabel(status) {
-  var labels = { open: "Open", planned: "Planned", in_progress: "In progress", shipped: "Shipped" };
+  var labels = { open: "Open", planned: "Planned", in_progress: "In progress", shipped: "Shipped", closed: "Closed" };
   return labels[status] || status;
 }
 

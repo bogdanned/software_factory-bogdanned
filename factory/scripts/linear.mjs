@@ -95,6 +95,35 @@ export async function comment(id, team, body) {
   return `${issue.identifier}: ${commentCreate.comment.url}\n`;
 }
 
+const TYPES = { ".png": "image/png", ".webm": "video/webm" };
+
+// Linear's own file storage: ask for an upload URL, PUT the bytes, keep the asset URL.
+// Screenshots show inline in GitHub, videos play when clicked. At most 20 files.
+export async function upload(dir) {
+  const path = await import("node:path");
+  const files = fs.readdirSync(dir).filter((f) => TYPES[path.extname(f)]).sort().slice(0, 20);
+  const urls = {};
+  for (const name of files) {
+    const file = path.join(dir, name);
+    const contentType = TYPES[path.extname(name)];
+    const { fileUpload } = await gql(
+      `mutation($contentType: String!, $filename: String!, $size: Int!) {
+        fileUpload(contentType: $contentType, filename: $filename, size: $size) { uploadFile { uploadUrl assetUrl headers { key value } } }
+      }`,
+      { contentType, filename: name, size: fs.statSync(file).size },
+    );
+    const { uploadUrl, assetUrl, headers } = fileUpload.uploadFile;
+    const res = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": contentType, "Cache-Control": "public, max-age=31536000", ...Object.fromEntries(headers.map((h) => [h.key, h.value])) },
+      body: fs.readFileSync(file),
+    });
+    if (!res.ok) throw new Error(`upload of ${file} failed: ${res.status}`);
+    urls[file] = assetUrl;
+  }
+  return `${JSON.stringify(urls)}\n`;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [cmd, id, ...rest] = process.argv.slice(2);
   const add = [];
@@ -103,6 +132,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     spec: () => spec(id, teamKey()),
     label: () => label(id, teamKey(), add, remove),
     comment: () => comment(id, teamKey(), fs.readFileSync(0, "utf8")),
+    upload: () => upload(id)
+
   };
   let ok = Boolean(id) && cmd in commands;
   for (let i = 0; i < rest.length; i += 2) {

@@ -1,0 +1,140 @@
+name: Factory QA
+# Every factory PR: an agent tests each acceptance criterion in a real browser,
+# against the built app, on a fresh database. Plain code decides the verdict.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# It comments and sets a status. It can never approve or push.
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+
+# A new push to the branch cancels the QA of the old one.
+concurrency:
+  group: factory-qa-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  qa:
+    if: startsWith(github.head_ref, 'factory/') && github.event.pull_request.head.repo.full_name == github.repository && vars.FACTORY_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_USER: bugboard, POSTGRES_PASSWORD: bugboard, POSTGRES_DB: bugboard }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U bugboard" --health-interval 2s --health-retries 20
+    env:
+      DATABASE_URL: postgres://bugboard:bugboard@localhost:5432/bugboard
+      BRANCH: ${{ github.head_ref }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Mark factory/qa pending
+        run: |
+          gh api --silent "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=pending -f context=factory/qa -f description="QA agent: running" -f target_url="$RUN_URL"
+
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.event.pull_request.head.sha }}", persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+
+      # If this fails, QA can't run: the report says so and spends no fix round.
+      - name: Start the app
+        id: stack
+        continue-on-error: true
+        run: |
+          npm ci
+          npm run db:migrate
+          npm run db:seed
+          npm run build
+          # A fresh admin password for this run only; the agent gets it in its prompt
+          password=$(openssl rand -hex 16)
+          echo "::add-mask::$password"
+          echo "ADMIN_PASSWORD=$password" >> "$GITHUB_ENV"
+          # Production build, dev login on (never on Amplify)
+          NODE_ENV=production SESSION_SECRET=$(openssl rand -hex 32) ADMIN_PASSWORD=$password BUGBOARD_DEV_LOGIN=1 \
+            nohup npm start > "$RUNNER_TEMP/app.log" 2>&1 &
+          # Wait until the app answers, at most 2 minutes
+          curl -sf --retry 120 --retry-delay 1 --retry-all-errors --retry-max-time 120 http://localhost:3000 > /dev/null
+
+      - name: Load the ticket
+        id: spec
+        if: steps.stack.outcome == 'success'
+        continue-on-error: true
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          # A PR can't ship its own qa.json: start from an empty folder (git ignores it)
+          rm -rf qa-out && mkdir -p qa-out/checks qa-out/media
+          # The ticket id from the branch: factory/bbd-12-sort-the-board → BBD-12
+          ticket=$(echo "$BRANCH" | cut -d/ -f2 | cut -d- -f1,2 | tr '[:lower:]' '[:upper:]')
+          node factory/scripts/linear.mjs spec "$ticket" > qa-out/spec.md
+
+      # The browser records a video of the session: Playwright's ffmpeg, the MCP's version
+      - name: Install ffmpeg for the video
+        if: steps.spec.outcome == 'success'
+        run: npx -y "playwright@$(npm view @playwright/mcp@0.0.84 dependencies.playwright)" install ffmpeg
+
+      - name: Prepare the QA agent
+        id: agent
+        if: steps.spec.outcome == 'success'
+        run: node factory/scripts/agent.mjs qa --spec qa-out/spec.md
+
+      # A failed run leaves no qa.json: the report turns that into an error.
+      - name: Run the QA agent
+        if: steps.agent.outcome == 'success'
+        uses: anthropics/claude-code-action@v1
+        continue-on-error: true
+        timeout-minutes: ${{ fromJSON(steps.agent.outputs.timeout_minutes) }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            ${{ steps.agent.outputs.prompt }}
+            - Admin password: ${{ env.ADMIN_PASSWORD }}
+          claude_args: ${{ steps.agent.outputs.claude_args }}
+
+      # The agent's word is not enough: its checks must pass on their own.
+      - name: Re-run the agent's checks
+        if: steps.agent.outcome == 'success'
+        continue-on-error: true
+        run: npx playwright test --config factory/qa-checks.config.ts --reporter=json > qa-out/checks.json
+
+      - name: Post the QA report
+        if: ${{ !cancelled() }}
+        env:
+          STACK: ${{ steps.spec.outcome == 'success' && 'success' || 'failure' }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          # Screenshots and the video onto Linear's file storage: they show and play on the PR
+          node factory/scripts/linear.mjs upload qa-out/media > "$RUNNER_TEMP/media.json" || echo '{}' > "$RUNNER_TEMP/media.json"
+          # Prints success, failure or error and writes the comment
+          state=$(node factory/scripts/qa-report.mjs "$STACK" qa-out/qa.json qa-out/checks.json "$RUNNER_TEMP/comment.md" "$RUNNER_TEMP/media.json")
+          gh pr comment "$PR_URL" --body-file "$RUNNER_TEMP/comment.md"
+          gh api --silent "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state="$state" -f context=factory/qa -f description="QA agent: $state" -f target_url="$RUN_URL"
+          # The job fails only on a failed criterion; "QA could not run" stays green
+          [ "$state" != failure ]
+
+      - name: Upload screenshots and checks
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with: { name: qa-out, path: qa-out, if-no-files-found: ignore }
+
+  # Your own PRs get no QA run: a green status, so the required check never blocks them.
+  not-factory:
+    if: ${{ !startsWith(github.head_ref, 'factory/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          gh api --silent "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=success -f context=factory/qa -f description="Not a factory PR: no QA run"

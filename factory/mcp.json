@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@0.0.84",
+        "--config",
+        "factory/playwright-mcp.json",
+        "--allowed-origins",
+        "http://localhost:3000"
+      ]
+    }
+  }
+}

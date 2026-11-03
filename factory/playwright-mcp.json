@@ -1,0 +1,11 @@
+{
+  "browser": {
+    "isolated": true,
+    "launchOptions": { "channel": "chrome", "headless": true },
+    "contextOptions": {
+      "viewport": { "width": 1280, "height": 720 },
+      "recordVideo": { "dir": "qa-out/media", "size": { "width": 1280, "height": 720 } }
+    }
+  },
+  "outputDir": "qa-out/media"
+}

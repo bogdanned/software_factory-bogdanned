@@ -76,7 +76,11 @@ export function requireUser(req: Request, res: Response, next: NextFunction): vo
 }
 
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  if (req.user?.role !== "admin") {
+  if (!req.user) {
+    res.status(401).json({ error: "Sign in first" });
+    return;
+  }
+  if (req.user.role !== "admin") {
     res.status(403).json({ error: "Admins only" });
     return;
   }

@@ -1,4 +1,4 @@
-import { integer, pgTable, serial, text, timestamp, varchar } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, integer, pgTable, serial, text, timestamp, varchar } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -18,6 +18,7 @@ export const feedback = pgTable("feedback", {
   authorId: integer("author_id").notNull().references(() => users.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   shippedAt: timestamp("shipped_at", { withTimezone: true }),
+  mergedIntoId: integer("merged_into_id").references((): AnyPgColumn => feedback.id),
 });
 
 export const votes = pgTable("votes", {

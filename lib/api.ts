@@ -26,6 +26,7 @@ export interface FeedbackItem {
   shipped_at: string | null;
   votes: number;
   voted: boolean;
+  merged_into_id?: number | null;
   comments?: number;
 }
 

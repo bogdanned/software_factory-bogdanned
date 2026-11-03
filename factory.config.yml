@@ -32,6 +32,7 @@ gates:
   typecheck: npm run typecheck
   test: npm test
   e2e: npm run e2e
+  auto_ready: true
 
 limits:
   max_open_prs: 2

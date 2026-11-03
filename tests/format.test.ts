@@ -11,6 +11,7 @@ describe("format", () => {
   });
   it("labels statuses", () => {
     expect(statusLabel("in_progress")).toBe("In progress");
+    expect(statusLabel("closed")).toBe("Closed");
   });
   it("pluralises", () => {
     expect(plural(1, "comment")).toBe("1 comment");

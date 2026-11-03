@@ -16,6 +16,7 @@ interface Row {
   shipped_at: string | null;
   votes: number;
   voted: boolean;
+  merged_into_id?: number | null;
   comments?: number;
 }
 
@@ -31,7 +32,7 @@ feedbackRoutes.get("/feedback", async (req, res) => {
             (SELECT count(*)::int FROM votes v WHERE v.feedback_id = f.id) AS votes,
             EXISTS (SELECT 1 FROM votes v WHERE v.feedback_id = f.id AND v.user_id = $3) AS voted
        FROM feedback f JOIN users u ON u.id = f.author_id
-      WHERE ${where}
+      WHERE f.merged_into_id IS NULL AND ${where}
       ORDER BY votes DESC
       LIMIT $4 OFFSET $5`,
     [status, q, req.user?.id ?? 0, limit, (page - 1) * limit],
@@ -40,13 +41,13 @@ feedbackRoutes.get("/feedback", async (req, res) => {
     const [c] = await sql<{ n: number }>("SELECT count(*)::int AS n FROM comments WHERE feedback_id = $1", [item.id]);
     item.comments = c.n;
   }
-  const [{ total }] = await sql<{ total: number }>(`SELECT count(*)::int AS total FROM feedback f WHERE ${where}`, [status, q]);
+  const [{ total }] = await sql<{ total: number }>(`SELECT count(*)::int AS total FROM feedback f WHERE f.merged_into_id IS NULL AND ${where}`, [status, q]);
   res.json({ items, page, limit, total });
 });
 
 feedbackRoutes.get("/feedback/:id", async (req, res) => {
   const [item] = await sql<Row>(
-    `SELECT f.id, f.title, f.body, f.status, u.name AS author, f.created_at, f.shipped_at,
+    `SELECT f.id, f.title, f.body, f.status, u.name AS author, f.created_at, f.shipped_at, f.merged_into_id,
             (SELECT count(*)::int FROM votes v WHERE v.feedback_id = f.id) AS votes,
             EXISTS (SELECT 1 FROM votes v WHERE v.feedback_id = f.id AND v.user_id = $2) AS voted
        FROM feedback f JOIN users u ON u.id = f.author_id WHERE f.id = $1`,
@@ -142,7 +143,7 @@ feedbackRoutes.patch("/feedback/:id/status", requireUser, async (req, res) => {
 
 feedbackRoutes.get("/changelog", async (_req, res) => {
   const items = await sql(
-    `SELECT id, title, shipped_at FROM feedback WHERE status = 'shipped' ORDER BY shipped_at DESC NULLS LAST`,
+    `SELECT id, title, shipped_at FROM feedback WHERE status = 'shipped' AND merged_into_id IS NULL ORDER BY shipped_at DESC NULLS LAST`,
   );
   res.json({ items });
 });

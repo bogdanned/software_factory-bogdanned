@@ -1,0 +1,2 @@
+ALTER TABLE "feedback" ADD COLUMN "merged_into_id" integer;--> statement-breakpoint
+ALTER TABLE "feedback" ADD CONSTRAINT "feedback_merged_into_id_feedback_id_fk" FOREIGN KEY ("merged_into_id") REFERENCES "public"."feedback"("id") ON DELETE no action ON UPDATE no action;

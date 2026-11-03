@@ -1,5 +1,6 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { CommentForm } from "@/components/comment-form";
+import { MergeControl } from "@/components/merge-control";
 import { StatusBadge } from "@/components/status-badge";
 import { VoteButton } from "@/components/vote-button";
 import { api, currentUser, type FeedbackItem } from "@/lib/api";
@@ -12,11 +13,16 @@ interface Comment {
   created_at: string;
 }
 
+function AdminTools({ role, id }: { role?: string; id: number }) {
+  return role === "admin" ? <MergeControl id={id} /> : null;
+}
+
 export default async function FeedbackPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const [res, user] = await Promise.all([api<{ item: FeedbackItem; comments: Comment[] }>(`/api/feedback/${id}`), currentUser()]);
   if (res.status === 404) notFound();
   const { item, comments } = res.data;
+  if (item.merged_into_id) redirect(`/feedback/${item.merged_into_id}`);
 
   return (
     <article className="space-y-6">
@@ -31,6 +37,7 @@ export default async function FeedbackPage({ params }: { params: Promise<{ id: s
         <StatusBadge status={item.status} />
       </div>
       {item.body && <p className="whitespace-pre-wrap">{item.body}</p>}
+      <AdminTools role={user?.role} id={item.id} />
 
       <section className="space-y-4">
         <h2 className="font-semibold">Comments</h2>

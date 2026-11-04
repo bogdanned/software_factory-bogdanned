@@ -15,7 +15,7 @@ export function databaseUrl(): Promise<string> {
       if (!url) throw new Error("Set DATABASE_URL (or DATABASE_SECRET_ARN on Amplify)");
       return url;
     }
-    const client = new SecretsManagerClient({});
+    const client = new SecretsManagerClient({ region: arn.split(":")[3] });
     const res = await client.send(new GetSecretValueCommand({ SecretId: arn }));
     const value = res.SecretString ?? "";
     // A plain URL, or the JSON RDS writes ({ "url": … } or its parts).

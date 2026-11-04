@@ -1,8 +1,21 @@
-# BugBoard
+# Agentic Software Factory
+
+Linear tickets go through a refine agent and an implementor agent, then CI gates (lint, typecheck, tests, e2e, Fallow) with a fix loop of at most 3 rounds, AI code review and a browser QA agent, then merge and deploy to AWS Amplify + RDS. It runs on BugBoard, a customer-feedback app.
+
+![Software factory pipeline](https://tsd-blog-content.s3.eu-central-1.amazonaws.com/classroom/uploads/10565876-dd9f-4b9f-a70c-9fcd5a86a2fe/full-factory-v2.png)
+
+## What's in here
+
+- `factory/agents/`: agent prompts: `refiner.md`, `implementor.md`, `reviewer.md`, `qa.md`
+- `.github/workflows/`: `factory-refine.yml`, `factory-implement.yml`, `factory-review.yml`, `factory-qa.yml`, and `main.yml` (CI gates + deploy)
+- `.claude/skills/`: `bugboard-browser-qa` (the QA agent's browser checks) and `vercel-react-best-practices`
+- the rest of the repo: BugBoard itself, the product the factory ships changes to
+
+## BugBoard (the app)
 
 A customer-feedback board (Next.js + a legacy Express API + Postgres) that you build a software factory on.
 
-## Run locally
+### Run locally
 
 ```bash
 npm ci
@@ -14,7 +27,7 @@ npm run dev
 
 Open http://localhost:3000 and pick **Continue as Ada** or **Continue as Lin**. Admin password: `bugboard-admin` locally.
 
-## Scripts
+### Scripts
 
 | Script | Does |
 |---|---|
@@ -26,7 +39,7 @@ Open http://localhost:3000 and pick **Continue as Ada** or **Continue as Lin**. 
 | `seed:backlog` | your Linear backlog (`-- --dry-run` to preview) |
 | `factory:metrics` | PR stats for your factory |
 
-## Env
+### Env
 
 | Variable | |
 |---|---|
@@ -38,7 +51,7 @@ Open http://localhost:3000 and pick **Continue as Ada** or **Continue as Lin**. 
 | `NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST` | PostHog (off when unset) |
 | `LINEAR_API_KEY`, `LINEAR_TEAM_KEY` | `seed:backlog` |
 
-## Links
+### Links
 
 - Course: [Build Your Own Software Factory](https://www.theseniordev.com/app/classroom)
 
